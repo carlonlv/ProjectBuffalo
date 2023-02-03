@@ -1,7 +1,3 @@
-import requests
-import pandas as pd
-import os
-
 from Config import *
 
 class StockGrepper:
