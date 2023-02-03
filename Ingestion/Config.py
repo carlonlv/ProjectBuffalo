@@ -3,20 +3,24 @@ import warnings
 
 from Utility.errors import *
 
+
+API_CHOICES = ['alphavantage']
+
 class Configuration:
 
-    api_choices=['alphavantage']
+    api_choice=API_CHOICES[0]
 
-    api_url_mapping = {
-        'alphavantage': r"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=IBM&interval=5min&apikey="
-    }
-
-    api_choice=api_choices[0]
-
-    api_key=r'TBUGEDGGVAK59VD2'
+    api_key=r'2rrNROO0beX90lPH7ixQOp0mT_9SwF0d'
     
     storage_folder="__cacheddata__"
 
+    additional_configs={
+        "connection_timeout":10,
+        "read_timeout":10,
+        "retries":3
+    }
+
+    @staticmethod
     def update_setting(self, **setting_dict):
         for item in setting_dict:
             if item in inspect.getmembers(Configuration):
