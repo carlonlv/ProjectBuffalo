@@ -1,8 +1,8 @@
 import inspect
 import warnings
 
-from Utility.errors import *
-from APITypes import *
+from .Enum import API
+
 
 class Configuration:
 
@@ -10,7 +10,7 @@ class Configuration:
 
     api_key=r'2rrNROO0beX90lPH7ixQOp0mT_9SwF0d'
     
-    storage_folder="__cacheddata__"
+    storage_folder=r'../../../__cached_data'
 
     @staticmethod
     def update_setting(self, **setting_dict):
