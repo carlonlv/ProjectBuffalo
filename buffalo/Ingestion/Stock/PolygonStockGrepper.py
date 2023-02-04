@@ -34,7 +34,7 @@ class PolygonStockGrepper(DataGrepper):
         :param verbose: Whether to print debug messages. Default to False,
         """
         self.client = do_call(polygon.rest.RESTClient, api_key=Configuration.api_key, **init_args)
-        super()._populate_query_methods(QUERIES)
+        self._populate_query_methods(QUERIES)
 
 
     def quotes_download(self, stores: bool=True, returns: bool=True, file_name: str='stock_quote_ingestion_{datetime}.{file_type}', table_name: Optional[str]=None, file_type: Storage=Storage.SQLITE, **download_args) -> Union[pd.DataFrame, None]:
@@ -56,11 +56,14 @@ class PolygonStockGrepper(DataGrepper):
         :param raw: Return HTTPResponse object instead of results object.
         :return: None if returns is set to False, otherwise, return the data.
         """
-        download_args["raw"] = False
-        data = pd.concat([pd.json_normalize(json.loads(x)) for x in do_call(self.client.list_quotes, **download_args)])
+        download_args["raw"] = True
+        requets = json.loads(do_call(self.client.list_quotes, **download_args).data)
+        record_path = ['results']
+        meta = [x for x in requets.keys() if x not in record_path]
+        data = pd.json_normalize(requets, record_path, meta)
         if stores:
-            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type))
-            super()._store_data(data, file_path, table_name, file_type)
+            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type.value))
+            self._store_data(data, file_path, table_name, file_type)
 
         if returns:
             return data
@@ -87,34 +90,42 @@ class PolygonStockGrepper(DataGrepper):
         :param raw: Return HTTPResponse object instead of results object.
         :return: None if returns is set to False, otherwise, return the data.
         """
-        download_args["raw"] = False
-        data = pd.concat([pd.json_normalize(json.loads(x)) for x in do_call(self.client.list_trades, **download_args)])
+        download_args['raw'] = True
+        requets = json.loads(do_call(self.client.list_trades, **download_args).data)
+        record_path = ['results']
+        meta = [x for x in requets.keys() if x not in record_path]
+        data = pd.json_normalize(requets, record_path, meta)
                 
         if stores:
-            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type))
-            super()._store_data(data, file_path, table_name, file_type)
+            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type.value))
+            self._store_data(data, file_path, table_name, file_type)
 
         if returns:
             return data
         else:
             return None
 
-    def snapshot_download(self, stores: bool=True, returns: bool=True, file_name: str='stock_quote_ingestion_{datetime}.{file_type}', table_name: Optional[str]=None, file_type: Storage=Storage.SQLITE, **download_args) -> Union[pd.DataFrame, None]:
+
+    def snapshots_download(self, stores: bool=True, returns: bool=True, file_name: str='stock_quote_ingestion_{datetime}.{file_type}', table_name: Optional[str]=None, file_type: Storage=Storage.SQLITE, **download_args) -> Union[pd.DataFrame, None]:
         """ Download Snapshot of a ticker of using Polygon API
         
         :param stores: Whether to store the data instead of simply returning it.
         :param returns: Whether to return the data.
         :param **download_args: Additional arguments passed into api list_quotes. Arguments are presented in below.
-        :param tickers: A comma separated list of tickers to get snapshots for.
+        :param tickers: A list of tickers to get snapshots for.
         :param include_otc: Include OTC securities in the response. Default is false (don't include OTC securities).
         :return: List of Snapshots
         """
-        download_args["raw"] = False
-        download_args["market_type"] = polygon.rest.snapshot.SnapshotMarketType.STOCKS.value
-        data = pd.concat([pd.Series(unfold_object(x)) for x in do_call(self.client.get_snapshot_all, **download_args)])
+        download_args['raw'] = True
+        download_args['market_type'] = polygon.rest.snapshot.SnapshotMarketType.STOCKS.value
+
+        requets = json.loads(do_call(self.client.get_snapshot_all, **download_args).data)
+        record_path = ['tickers']
+        meta = [x for x in requets.keys() if x not in record_path]
+        data = pd.json_normalize(requets, record_path, meta)
         if stores:
-            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type))
-            super()._store_data(data, file_path, table_name, file_type)
+            file_path = os.path.join(Configuration.storage_folder, file_name.format(datetime=datetime.now().strftime(r'%y%m%d%H%M%S'), file_type=file_type.value))
+            self._store_data(data, file_path, table_name, file_type)
 
         if returns:
             return data
