@@ -25,9 +25,23 @@ def concat_list(lst, sep=","):
 
     :param lst: A list of objects that can be converted to strings.
     :param sep: The symbol used to separate strings.
-    :return: Concatenated string using the separator.
+    :return: Concatenated string.
     """
     return sep.join(map(str, lst))
+
+def concat_dict(dct, kv_sep=":", sep=","):
+    """
+    Concat all items in a given dictionary.
+
+    :param dct: A dictionary of keys and values can be converted to strings.
+    :param kv_sep: The symbol used to separate keys and values.
+    :param sep: The symbol used to separate items.
+    :return: Concatenated string.
+    """
+    items = []
+    for key, value in dct.items():
+        items.append(f'{key}{kv_sep}{value}')
+    return sep.join(items)
 
 def create_parent_directory(filepath):
     """

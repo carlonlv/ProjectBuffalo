@@ -13,7 +13,14 @@ class Storage(enum.Enum):
     PICKLE = "pkl"
 
 
+class Frquency(enum.Enum):
+    """ Frequency of Data
+    """
+    ONE_MIN = "1m"
+    FIVE_MIN = "5m"
+
+
 class API(enum.Enum):
     """ Supported API enums for data ingestion.
     """
-    POLYGON = enum.auto()
+    ADVANTAGE = enum.auto()
