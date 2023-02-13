@@ -4,6 +4,10 @@ Common helper functions that can be useful to all modules.
 
 import inspect
 import os
+import warnings
+
+import numpy as np
+import pandas as pd
 
 
 def do_call(func, *args, **kwargs):
@@ -51,3 +55,36 @@ def create_parent_directory(filepath):
     directory = os.path.dirname(filepath)
     if not os.path.exists(directory):
         os.makedirs(directory)
+
+def expand_grid(**kwargs):
+    """
+    Create an cross join product from given arguments.
+    :param **kwargs: Arguments to create columns.
+    :return: A data frame.
+    """
+    columns = kwargs.keys()
+    xii = kwargs.values()
+    return pd.DataFrame({
+        coln: arr.flatten() for coln, arr in zip(columns, np.meshgrid(*xii))
+    })
+
+def find_nearest_in_list(item, lst, round_up=False, round_down=False):
+    """
+    Find the closet approximation of item from a list. If round_up and
+    round_down are both false, minimum absolute values are used.
+    :param item: An element to be approximated.
+    :param lst: A list of elements to be returned.
+    :param round_up: Whether to only round up.
+    :param round_down: Whether to only round down. only_greater takes precedence.
+    """
+    if round_up:
+        n_lst = [x for x in lst if x >= item]
+        if len(n_lst) == 0:
+            warnings.warn(f'{item} is smaller (out of bound) than acceptable {concat_list(n_lst)}')
+            return min(lst)
+    elif round_down:
+        n_lst = [x for x in lst if x <= item]
+        if len(n_lst) == 0:
+            warnings.warn(f'{item} is greater (out of bound) than acceptable {concat_list(n_lst)}')
+            return max(lst)
+    return min(lst, key=lambda y: abs(y - item))
