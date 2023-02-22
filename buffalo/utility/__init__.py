@@ -62,6 +62,7 @@ def expand_grid(**kwargs):
     :param **kwargs: Arguments to create columns.
     :return: A data frame.
     """
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
     columns = kwargs.keys()
     xii = kwargs.values()
     return pd.DataFrame({

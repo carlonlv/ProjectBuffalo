@@ -24,3 +24,21 @@ class API(enum.Enum):
     """ Supported API enums for data ingestion.
     """
     ADVANTAGE = enum.auto()
+
+
+class DataType(enum.Enum):
+    """ Suppored DataType for data ingestion.
+    """
+    STOCK = enum.auto()
+    FOREX = enum.auto()
+    CRYPTO = enum.auto()
+    OPTION = enum.auto()
+    ECON = enum.auto()
+    INDICATOR = enum.auto()
+    COMPARY = enum.auto()
+
+class IngestionType(enum.Enum):
+    """ Suppored data ingestion type.
+    """
+    STREAM = enum.auto()
+    REST = enum.auto()
