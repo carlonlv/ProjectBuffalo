@@ -4,7 +4,7 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import List, Literal, Optional, Union, get_args, NewType
+from typing import Literal, Optional, NewType
 
 import pandas as pd
 import requests
@@ -12,15 +12,19 @@ import requests
 from . import configuration, enum
 
 PositiveInt = NewType('PositiveInt', int)
-PositiveFloat = NewType('PositiveFloat', float)
+PositiveFlt = NewType('PositiveFloat', float)
 
 class PositiveInteger(int):
+    """ Custom data type of positive integer to enforce type checking.
+    """
     def __new__(cls, value):
         if value < 0:
             raise ValueError("PositiveInteger cannot be negative")
         return super().__new__(cls, value)
 
 class PositiveFloat(float):
+    """ Custom data type of positive float to enforce type checking.
+    """
     def __new__(cls, value):
         if value < 0:
             raise ValueError("PositiveFloat cannot be negative")
@@ -34,7 +38,7 @@ class AdvantageStockGrepper:
 
     def __init__(self) -> None:
         self.api_key = configuration.Configuration.api_keys[enum.API.ADVANTAGE]
-    
+
     def _construct_url(self, **kwargs) -> str:
         """ Construct url from key word arguments.
 
@@ -47,58 +51,31 @@ class AdvantageStockGrepper:
             lst.append(f'&{key}={value}')
         return self.url_base + ''.join(lst)
 
-    def interday_stock_download(
+    def stock_download(
             self,
             symbol: str,
-            interval: Literal['1min', '5min', '15min', '30min', '60min'],
+            interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
             year_slice: Optional[Literal['year1month1', 'year1month2', 'year1month3', 'year1month4', 'year1month5', 'year1month6', 'year1month7', 'year1month8', 'year1month9', 'year1month10', 'year1month11', 'year1month12', 'year2month1', 'year2month2', 'year2month3', 'year2month4', 'year2month5', 'year2month6', 'year2month7', 'year2month8', 'year2month9', 'year2month10', 'year2month11', 'year2month12']]='year1month1',
-            adjusted: Optional[bool]=True
-        ) -> pd.DataFrame:
+            adjusted: Optional[bool]=True) -> pd.DataFrame:
         """
-        This method returns historical intraday time series for the trailing 2 years, covering over 2 million data points per ticker. The intraday data is derived from the Securities Information Processor (SIP) market-aggregated data. You can query both raw (as-traded) and split/dividend-adjusted intraday data from this endpoint. Common use cases for This method include data visualization, trading simulation/backtesting, and machine learning and deep learning applications with a longer horizon.
-
-        :param symbol: The name of the equity of your choice. For example: symbol=IBM.
-        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min.
-        :param year_slice: Two years of minute-level intraday data contains over 2 million data points, which can take up to Gigabytes of memory. To ensure optimal API response speed, the trailing 2 years of intraday data is evenly divided into 24 "slices" - year1month1, year1month2, year1month3, ..., year1month11, year1month12, year2month1, year2month2, year2month3, ..., year2month11, year2month12. Each slice is a 30-day window, with year1month1 being the most recent and year2month12 being the farthest from today. By default, slice=year1month1. 
-        :param adjusted: By default, adjusted=true and the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
-        :return: Downloaded data frame.
-        """
-        url = self._construct_url(
-            function = 'TIME_SERIES_INTRADAY_EXTENDED',
-            symbol = symbol,
-            interval = interval,
-            slice = year_slice,
-            adjusted = adjusted,
-            apikey = self.api_key)
-        
-        result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return result
-    
-    def extraday_stock_download(
-            self,
-            symbol: str,
-            interval: Literal['daily', 'weekly', 'monthly'],
-            adjusted: Optional[bool]=True
-        ) -> pd.DataFrame:
-        """
-        This method returns raw (as-traded) daily/weekly/monthly time series (date, open, high, low, close, volume) of the global equity specified, covering 20+ years of historical data. If you are also interested in split/dividend-adjusted historical data, please use the Daily Adjusted API, which covers adjusted close values and historical split and dividend events.
+        This method returns raw (as-traded) intraday/daily/weekly/monthly time series (date, open, high, low, close, volume) of the global equity specified, covering 20+ years of historical data. If you are also interested in split/dividend-adjusted historical data, please use the Daily Adjusted API, which covers adjusted close values and historical split and dividend events.
 
         :param symbol: The name of the equity of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: daily, weekly, monthly.
+        :param year_slice: Two years of minute-level intraday data contains over 2 million data points, which can take up to Gigabytes of memory. To ensure optimal API response speed, the trailing 2 years of intraday data is evenly divided into 24 "slices" - year1month1, year1month2, year1month3, ..., year1month11, year1month12, year2month1, year2month2, year2month3, ..., year2month11, year2month12. Each slice is a 30-day window, with year1month1 being the most recent and year2month12 being the farthest from today. By default, slice=year1month1. 
         :param adjusted: By default, adjusted=true and the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
         :return: Downloaded data frame.
         """
         function = 'TIME_SERIES_' + interval.upper()
 
-        if adjusted:
+        if adjusted and interval in ['daily', 'weekly', 'monthly']:
             function += '_ADJUTSED'
+            adjusted = None
 
         url = self._construct_url(
             function = function,
             symbol = symbol,
+            slice = year_slice,
             apikey = self.api_key,
             outputsize = 'full',
             datatype = 'csv')
@@ -108,7 +85,7 @@ class AdvantageStockGrepper:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
         return result
-    
+
     def market_news_sentiment_download(
             self,
             tickers: Optional[str]=None,
@@ -162,11 +139,12 @@ class AdvantageStockGrepper:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
         return pd.json_normalize(data)
-    
+
     def company_info_download(
         self,
-        function: Literal['OVERVIEW', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS'],
-        symbol: str) -> pd.Timestamp:
+        function: Literal['OVERVIEW', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS', 'EARNINGS_CALENDAR'],
+        symbol: str,
+        horizon: Optional[Literal['3month', '6month', '12month']]='3month') -> pd.Timestamp:
         """
         This method returns the company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
         
@@ -176,14 +154,14 @@ class AdvantageStockGrepper:
             3. BALANCE_SHEET: The annual and quarterly balance sheets for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
             4. CASH_FLOW: The annual and quarterly cash flow for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
             5. EARNINGS: The annual and quarterly earnings (EPS) for the company of interest. Quarterly data also includes analyst estimates and surprise metrics.
+            6. EARNINGS_CALENDAR: A list of company earnings expected in the next 3, 6, or 12 months.
         :param symbol: The symbol of the token of your choice. For example: symbol=IBM.
         :return: Downloaded data frame.
         """
-        function = 'NEWS_SENTIMENT'
-
         url = self._construct_url(
             function = function,
             symbol = symbol,
+            horizon = horizon,
             apikey = self.api_key)
 
         response = requests.get(url, timeout=10)
@@ -204,37 +182,10 @@ class AdvantageStockGrepper:
         :param state: By default, state=active and the API will return a list of actively traded stocks and ETFs. Set state=delisted to query a list of delisted assets.
         :return: Downloaded data frame.
         """
-        function = 'LISTING_STATUS'
-
         url = self._construct_url(
-            function = function,
+            function = 'LISTING_STATUS',
             date = date,
             state = state,
-            apikey = self.api_key)
-
-        result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return result
-    
-    def expected_earning_download(
-        self,
-        symbol: Optional[str],
-        horizon: Optional[Literal['3month', '6month', '12month']]) -> pd.Timestamp:
-        """
-        This method returns a list of company earnings expected in the next 3, 6, or 12 months.
-        
-        :param symbol: By default, no symbol will be set for this API. When no symbol is set, the API endpoint will return the full list of company earnings scheduled. If a symbol is set, the API endpoint will return the expected earnings for that specific symbol. For example, symbol=IBM.
-        :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively.
-        :return: Downloaded data frame.
-        """
-        function = 'EARNINGS_CALENDAR'
-
-        url = self._construct_url(
-            function = function,
-            symbol = symbol,
-            horizon = horizon,
             apikey = self.api_key)
 
         result = pd.read_csv(url)
@@ -259,19 +210,24 @@ class AdvantageStockGrepper:
 
         return result
 
-    def moving_average_indicator_download(
-        self, 
-        function: Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'T3'],
+    def trend_indicator_download(
+        self,
+        function: Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'T3', 'ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'SAR', 'TRANGE', 'ATR', 'NATR', 'BBANDS', 'MIDPOINT', 'MIDPRICE'],
         symbol: str,
         interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
         time_period: PositiveInt,
         series_type: Literal['close', 'open', 'high', 'low'],
-        fastlimit: PositiveFloat=0.01,
-        slowlimit: PositiveFloat=0.01) -> pd.Timestamp:
+        fastlimit: PositiveFlt=0.01,
+        slowlimit: PositiveFlt=0.01,
+        acceleration: PositiveFlt=0.01,
+        maximum: PositiveFlt=0.2,
+        nbdevup: PositiveInt=2,
+        nbdevdn: PositiveInt=2,
+        matype: Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]=0) -> pd.Timestamp:
         """
-        This method returns moving average indicators of prices.
+        This method returns trend indicators of prices.
 
-        :param function: The function to retrieve different moving average indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+        :param function: The function to retrieve different trend indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
             1. SMA: Simple moving average (SMA) values.
             2. EMA: Exponential moving average (EMA) values.
             3. WMA: Weighted moving average (WMA) values.
@@ -281,17 +237,51 @@ class AdvantageStockGrepper:
             7. KAMA: Kaufman adaptive moving average (KAMA) values.
             8. MAMA: MESA adaptive moving average (MAMA) values.
             9. T3: Triple exponential moving average (T3) values.
+            10. ADX: Average directional movement index (ADX) values. 
+            11. ADXR: Average directional movement index rating (ADXR) values.
+            12. DX: Directional movement index (DX) values.
+            13. MINUS_DI: Minus directional indicator (MINUS_DI) values.
+            14. PLUS_DI: Plus directional indicator (PLUS_DI) values.
+            15. MINUS_DM: Minus directional movement (MINUS_DM) values.
+            16. PLUS_DM: Plus directional movement (PLUS_DM) values.
+            17. SAR: Parabolic SAR (SAR) values.
+            18. TRANGE: True range (TRANGE) values.
+            19. ATR: Average true range (ATR) values. 
+            20. NATR: Normalized average true range (NATR) values.
+            21. BBANDS: Bollinger bands (BBANDS) values.
+            22. MIDPOINT: Midpoint (MIDPOINT) values.
+            23. MIDPRICE: Midpoint price (MIDPRICE) values.
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
-        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
-        :param fastlimit: Positive floats are accepted. By default, fastlimit=0.01.
-        :param slowlimit: Positive floats are accepted. By default, slowlimit=0.01.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200). Not used when function is MAMA.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Not used when function is ADX, ADXR, DX, MINUS_DI, PLUS_DI, MINUS_DM, PLUS_DM, ATR, NATR, MIDPRICE.
+        :param fastlimit: Positive floats are accepted. By default, fastlimit=0.01. Only used when function is MAMA.
+        :param slowlimit: Positive floats are accepted. By default, slowlimit=0.01. Only used when function is MAMA.
+        :param acceleration: The acceleration factor. Positive floats are accepted. By default, acceleration=0.01. Only used when function is SAR.
+        :param maximum: The acceleration factor maximum value. Positive floats are accepted. By default, maximum=0.20. Only used when function is SAR.
+        :param nbdevup: The standard deviation multiplier of the upper band. Positive integers are accepted. By default, nbdevup=2. Only used when function is BBAND.
+        :param nbdevdn: The standard deviation multiplier of the lower band. Positive integers are accepted. By default, nbdevdn=2. Only used when function is BBAND.
+        :param matype: Moving average type of the time series. By default, matype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA). Only used when function is BBAND.
         :return: Downloaded data frame.
         """
-        if function != 'MAMA':
+        if function not in ['MAMA']:
             fastlimit = None
             slowlimit = None
+
+        if function not in ['SAR']:
+            acceleration = None
+            maximum = None
+
+        if function not in ['BBAND']:
+            nbdevup = None
+            nbdevdn = None
+            matype = None
+
+        if function in ['MAMA']:
+            time_period = None
+
+        if function in ['ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'ATR', 'NATR', 'MIDPRICE']:
+            series_type = None
 
         url = self._construct_url(
             function = function,
@@ -301,6 +291,11 @@ class AdvantageStockGrepper:
             series_type = series_type,
             fastlimit = fastlimit,
             slowlimit = slowlimit,
+            acceleration = acceleration,
+            maximum = maximum,
+            nbdevup = nbdevup,
+            nbdevdn = nbdevdn,
+            matype = matype,
             datatype = 'csv',
             apikey = self.api_key)
 
@@ -310,92 +305,36 @@ class AdvantageStockGrepper:
 
         return result
 
-    def volume_weighted_average_price_indicator_download(
-        self, 
-        symbol: str,
-        interval: Literal['1min', '5min', '15min', '30min', '60min']) -> pd.Timestamp:
-        """
-        This method returns the volume weighted average price (VWAP) for intraday time series. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
-
-        :param symbol: The name of the token of your choice.
-        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min.
-        :return: Downloaded data frame.
-        """
-        url = self._construct_url(
-            function = 'VWAP',
-            symbol = symbol,
-            interval = interval,
-            datatype = 'csv',
-            apikey = self.api_key)
-
-        result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return result
-
-    def moving_average_convergence_indicator_download(
+    def momentum_indicator_download(
         self,
-        symbol: str,
-        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
-        series_type: Literal['close', 'open', 'high', 'low'],
-        fastperiod: Optional[PositiveInt]=12,
-        slowperiod: Optional[PositiveInt]=26,
-        signalperiod: Optional[PositiveInt]=9,
-        fastmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
-        slowmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
-        signalmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0) -> pd.Timestamp:
-        """
-        This method returns the moving average convergence / divergence indicators with controllable moving average type. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
-
-        :param symbol: The name of the token of your choice.
-        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
-        :param fastperiod: Positive integers are accepted. By default, fastperiod=12.
-        :param slowperiod: Positive integers are accepted. By default, fastperiod=26.
-        :param signalperiod: Positive integers are accepted. By default, signalperiod=9.
-        :param fastmatype: Moving average type for the faster moving average. By default, fastmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
-        :param slowmatype: Moving average type for the slower moving average. By default, slowmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
-        :param signalmatype: Moving average type for the signal moving average. By default, signalmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
-        :return: Downloaded data frame.
-        """
-        url = self._construct_url(
-            function = 'MACDEXT',
-            symbol = symbol,
-            interval = interval,
-            series_type = series_type,
-            fastperiod = fastperiod,
-            slowperiod = slowperiod,
-            signalperiod = signalperiod,
-            fastmatype = fastmatype,
-            slowmatype = slowmatype,
-            signalmatype = signalmatype,
-            datatype = 'csv',
-            apikey = self.api_key)
-
-        result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return result
-    
-    def rsi_indicator_download(
-        self,
+        function: Literal['RSI', 'WILLR', 'MOM', 'ROC', 'ROCR', 'AROON', 'AROONOSC', 'TRIX'],
         symbol: str,
         interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
         time_period: PositiveInt,
         series_type: Literal['close', 'open', 'high', 'low']) -> pd.Timestamp:
         """
-        This method returns the relative strength index(RSI) values. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+        This method returns momentum indicators of prices.
 
+        :param function: The function to retrieve different momentum indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. RSI: Relative strength index (RSI) values.
+            2. WILLR: Williams' %R (WILLR) values.
+            3. MOM: Momentum (MOM) values.
+            4. ROC: Rate of change (ROC) values. 
+            5. ROCR: Rate of change ratio (ROCR) values.
+            6. AROON: Aroon (AROON) values.
+            7. AROONOSC: Aroon oscillator (AROONOSC) values.
+            8. TRIX: 1-day rate of change of a triple smooth exponential moving average (TRIX) values.
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Not used when function is WILLR, AROON, AROONOSC.
         :return: Downloaded data frame.
         """
+        if function in ['WILLR', 'AROON', 'AROONOSC']:
+            series_type = None
+
         url = self._construct_url(
-            function = 'RSI',
+            function = function,
             symbol = symbol,
             interval = interval,
             time_period = time_period,
@@ -409,31 +348,140 @@ class AdvantageStockGrepper:
 
         return result
 
-
-    def stochastic_oscillator_indicator_download(
+    def oscillator_indicator_download(
         self,
-        function: Literal['STOCH', 'STOCHF', 'STOCHRSI'],
+        function: Literal['APO', 'PPO', 'BOP', 'CCI', 'MFI', 'STOCH', 'STOCHF'],
         symbol: str,
         interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
         time_period: PositiveInt,
         series_type: Literal['close', 'open', 'high', 'low'],
-        fastkperiod: Optional[PositiveInt],
-        fastdperiod: Optional[PositiveInt],
-        fastdmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0) -> pd.Timestamp:
+        fastperiod: Optional[PositiveInt]=12,
+        slowperiod: Optional[PositiveInt]=26,
+        matype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
+        fastkperiod: Optional[PositiveInt]=5,
+        slowkperiod: Optional[PositiveInt]=3,
+        slowdperiod: Optional[PositiveInt]=3,
+        slowkmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
+        slowdmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0) -> pd.Timestamp:
         """
-        This method returns the stochastic oscilator indicator values. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+        This method returns oscillator indicators of prices.
 
-        :param function: The function to retrieve different stochastic oscillator indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
-            1. STOCH: stochastic oscillator (STOCH) values.
-            2. STOCHF: stochastic fast (STOCHF) values.
-            3. STOCHRSI: stochastic relative strength index (STOCHRSI) values.
+        :param function: The function to retrieve different oscillator indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. APO: Absolute price oscillator (APO) values.
+            2. PPO: Percentage price oscillator (PPO) values.
+            3. CCI: Commodity channel index (CCI) values. 
+            4. MFI: Money flow index (MFI) values.
+            5. STOCH: Stochastic oscillator (STOCH) values.
+            6. STOCHF: Stochastic fast (STOCHF) values. 
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Not used when function is WILLR, AROON, AROONOSC.
+        :param fastperiod: Positive integers are accepted. By default, fastperiod=12.
+        :param slowperiod: Positive integers are accepted. By default, slowperiod=26.
+        :param matype: Moving average type. By default, matype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential
+            Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
         :param fastkperiod: The time period of the fastk moving average. Positive integers are accepted. By default, fastkperiod=5.
-        :param fastdperiod: The time period of the fastd moving average. Positive integers are accepted. By default, fastdperiod=3.
-        :param fastdmatype: Moving average type for the fastd moving average. By default, fastdmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :param slowkperiod: The time period of the slowk moving average. Positive integers are accepted. By default, slowkperiod=3.
+        :param slowdperiod: The time period of the slowd moving average. Positive integers are accepted. By default, slowdperiod=3.
+        :param slowkmatype: Moving average type for the slowk moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :param slowdmatype: Moving average type for the slowd moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :return: Downloaded data frame.
+        """
+        if function not in ['APO', 'PPO']:
+            fastperiod = None
+            slowperiod = None
+            matype = None
+
+        if function not in ['STOCH', 'STOCHF']:
+            fastkperiod = None
+            slowkperiod = None
+            slowdperiod = None
+            slowkmatype = None
+            slowdmatype = None
+
+        if function in ['CCI', 'MFI']:
+            series_type = None
+
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            interval = interval,
+            time_period = time_period,
+            series_type = series_type,
+            fastperiod = fastperiod,
+            slowperiod = slowperiod,
+            matype = matype,
+            fastkperiod = fastkperiod,
+            slowkperiod = slowkperiod,
+            slowdperiod = slowdperiod,
+            slowkmatype = slowkmatype,
+            slowdmatype = slowdmatype,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def volume_indicator_download(
+        self,
+        function: Literal['VWAP', 'OBV', 'AD', 'ADOSC'],
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        fastperiod: Optional[PositiveInt]=3,
+        slowperiod: Optional[PositiveInt]=10) -> pd.Timestamp:
+        """
+        This method returns volume indicators of prices.
+
+        :param function: The function to retrieve different volume indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. VWAP: Volume Weighted Average Price (VWAP) for intraday time series.
+            2. OBV: On balance volume (OBV) values.
+            3. AD: Chaikin A/D line (AD) values.
+            4. ADOSC: Chaikin A/D oscillator (ADOSC) values.
+        :param symbol: The name of the token of your choice. For example: symbol=IBM.
+        :param interval: Time interval between two consecutive data points in the time series. In keeping with mainstream investment literatures on VWAP, the following intraday intervals are supported: 1min, 5min, 15min, 30min, 60min. For other indicators, the following values are supported: 1min,
+            5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param fastperiod: The time period of the fast EMA. Positive integers are accepted. By default, fastperiod=3.
+        :param slowperiod: The time period of the slow EMA. Positive integers are accepted. By default, slowperiod=10.
+        :return: Downloaded data frame.
+        """
+        if function not in ['ADOSC']:
+            fastperiod = None
+            slowperiod = None
+
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            interval = interval,
+            fastperiod = fastperiod,
+            slowperiod = slowperiod,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def volatility_indicator_download(
+        self,
+        function: Literal['ATR', 'NATR'],
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        time_period: PositiveInt) -> pd.Timestamp:
+        """
+        This method returns volatility indicators of prices.
+
+        :param function: The function to retrieve different volatility indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. ATR: average true range (ATR) values. 
+            2. NATR: On balance volume (OBV) values.
+        :param symbol: The name of the token of your choice. For example: symbol=IBM.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
         :return: Downloaded data frame.
         """
         url = self._construct_url(
@@ -441,10 +489,64 @@ class AdvantageStockGrepper:
             symbol = symbol,
             interval = interval,
             time_period = time_period,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def cycle_indicator_download(
+        self,
+        function: Literal['CMO', 'ULTOSC', 'HT_TRENDLINE', 'HT_SINE', 'HT_TRENDMODE', 'HT_DCPERIOD', 'HT_DCPHASE', 'HT_PHASOR'],
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        time_period: PositiveInt,
+        series_type: Literal['close', 'open', 'high', 'low'],
+        timeperiod1: Optional[PositiveInt]=7,
+        timeperiod2: Optional[PositiveInt]=14,
+        timeperiod3: Optional[PositiveInt]=28) -> pd.Timestamp:
+        """
+        This method returns cycle indicators of prices.
+
+        :param function: The function to retrieve different cycle indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. CMO: Chande momentum oscillator (CMO) values.
+            2. ULTOSC: Ultimate oscillator (ULTOSC) values.
+            3. HT_TRENDLINE: Hilbert transform, instantaneous trendline (HT_TRENDLINE) values.
+            4. HT_SINE: Hilbert transform, sine wave (HT_SINE) values.
+            5. HT_TRENDMODE: Hilbert transform, trend vs cycle mode (HT_TRENDMODE) values.
+            6. HT_DCPERIOD: Hilbert transform, dominant cycle period (HT_DCPERIOD) values.
+            7. HT_DCPHASE: Hilbert transform, dominant cycle phase (HT_DCPHASE) values.
+            8. HT_PHASOR: Hilbert transform, phasor components (HT_PHASOR) values.
+        :param symbol: The name of the token of your choice. For example: symbol=IBM.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param timeperiod1: The first time period for the indicator. Positive integers are accepted. By default, timeperiod1=7.
+        :param timeperiod2: The second time period for the indicator. Positive integers are accepted. By default, timeperiod2=14.
+        :param timeperiod3: The third time period for the indicator. Positive integers are accepted. By default, timeperiod3=28.
+        :return: Downloaded data frame.
+        """
+        if series_type not in ['ULTOSC']:
+            timeperiod1 = None
+            timeperiod2 = None
+            timeperiod3 = None
+
+        if series_type not in ['CMO']:
+            series_type = None
+            time_period = None
+
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            interval = interval,
+            time_period = time_period,
             series_type = series_type,
-            fastkperiod = fastkperiod,
-            fastdperiod = fastdperiod,
-            fastdmatype = fastdmatype,
+            timeperiod1 = timeperiod1,
+            timeperiod2 = timeperiod2,
+            timeperiod3 = timeperiod3,
             datatype = 'csv',
             apikey = self.api_key)
 
