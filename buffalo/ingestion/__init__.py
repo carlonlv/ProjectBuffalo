@@ -6,7 +6,7 @@ import sqlite3
 from typing import List, Optional, Union
 
 import pandas as pd
-from utility import concat_list, create_parent_directory
+from buffalo.utility import concat_list, create_parent_directory
 
 from . import advantage, enum
 

@@ -48,8 +48,8 @@ class AdvantageStockGrepper:
         kwargs = {k:v for k, v in kwargs.items() if v is not None}
         lst = []
         for key, value in kwargs.items():
-            lst.append(f'&{key}={value}')
-        return self.url_base + ''.join(lst)
+            lst.append(f'{key}={value}')
+        return self.url_base + '&'.join(lst)
 
     def stock_download(
             self,
@@ -66,7 +66,10 @@ class AdvantageStockGrepper:
         :param adjusted: By default, adjusted=true and the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
         :return: Downloaded data frame.
         """
-        function = 'TIME_SERIES_' + interval.upper()
+        if interval in ['daily', 'weekly', 'monthly']:
+            function = 'TIME_SERIES_' + interval.upper()
+        else:
+            function = 'TIME_SERIES_INTRADAY_EXTENDED'
 
         if adjusted and interval in ['daily', 'weekly', 'monthly']:
             function += '_ADJUTSED'
@@ -75,10 +78,11 @@ class AdvantageStockGrepper:
         url = self._construct_url(
             function = function,
             symbol = symbol,
+            interval = interval,
             slice = year_slice,
-            apikey = self.api_key,
             outputsize = 'full',
-            datatype = 'csv')
+            datatype = 'csv',
+            apikey = self.api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -138,7 +142,22 @@ class AdvantageStockGrepper:
         if len(data) == 0:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
-        return pd.json_normalize(data)
+        result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
+        result = result.reset_index(drop=False)
+
+        topic_lst = []
+        ticker_lst = []
+        for index in result.index:
+            temp = pd.json_normalize(result.loc[index,'topics']).assign(index = index).rename(columns={'relevance_score': 'topic_relevance_score'})
+            topic_lst.append(temp)
+            temp = pd.json_normalize(result.loc[index,'ticker_sentiment']).assign(index = index).rename(columns={'relevance_score': 'ticker_relevance_score'})
+            ticker_lst.append(temp)
+        topic_lst = pd.concat(topic_lst)
+        ticker_lst = pd.concat(ticker_lst)
+
+        result = result.drop(columns=['topics', 'ticker_sentiment'])
+        
+        return result.merge(topic_lst), result.merge(ticker_lst)
 
     def company_info_download(
         self,
