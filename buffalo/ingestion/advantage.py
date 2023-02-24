@@ -72,7 +72,7 @@ class AdvantageStockGrepper:
             function = 'TIME_SERIES_INTRADAY_EXTENDED'
 
         if adjusted and interval in ['daily', 'weekly', 'monthly']:
-            function += '_ADJUTSED'
+            function += '_ADJUSTED'
             adjusted = None
 
         url = self._construct_url(
@@ -163,7 +163,7 @@ class AdvantageStockGrepper:
         self,
         function: Literal['OVERVIEW', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS', 'EARNINGS_CALENDAR'],
         symbol: str,
-        horizon: Optional[Literal['3month', '6month', '12month']]='3month') -> pd.Timestamp:
+        horizon: Optional[Literal['3month', '6month', '12month']]='3month') -> pd.DataFrame:
         """
         This method returns the company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
         
@@ -231,7 +231,7 @@ class AdvantageStockGrepper:
 
     def trend_indicator_download(
         self,
-        function: Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'T3', 'ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'SAR', 'TRANGE', 'ATR', 'NATR', 'BBANDS', 'MIDPOINT', 'MIDPRICE'],
+        function: Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'T3', 'ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'SAR', 'TRANGE', 'BBANDS', 'MIDPOINT', 'MIDPRICE'],
         symbol: str,
         interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
         time_period: PositiveInt,
@@ -265,11 +265,9 @@ class AdvantageStockGrepper:
             16. PLUS_DM: Plus directional movement (PLUS_DM) values.
             17. SAR: Parabolic SAR (SAR) values.
             18. TRANGE: True range (TRANGE) values.
-            19. ATR: Average true range (ATR) values. 
-            20. NATR: Normalized average true range (NATR) values.
-            21. BBANDS: Bollinger bands (BBANDS) values.
-            22. MIDPOINT: Midpoint (MIDPOINT) values.
-            23. MIDPRICE: Midpoint price (MIDPRICE) values.
+            19. BBANDS: Bollinger bands (BBANDS) values.
+            20. MIDPOINT: Midpoint (MIDPOINT) values.
+            21. MIDPRICE: Midpoint price (MIDPRICE) values.
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200). Not used when function is MAMA.
@@ -496,8 +494,8 @@ class AdvantageStockGrepper:
         This method returns volatility indicators of prices.
 
         :param function: The function to retrieve different volatility indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
-            1. ATR: average true range (ATR) values. 
-            2. NATR: On balance volume (OBV) values.
+            1. ATR: Average true range (ATR) values. 
+            2. NATR: Normalized Average True Range (NATR) values.
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
