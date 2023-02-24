@@ -4,73 +4,27 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import List, Literal, Optional, Union, get_args
+from typing import List, Literal, Optional, Union, get_args, NewType
 
 import pandas as pd
 import requests
 
 from . import configuration, enum
 
-# Intervals = Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']
+PositiveInt = NewType('PositiveInt', int)
+PositiveFloat = NewType('PositiveFloat', float)
 
-# EconIndicators = Literal['REAL_GDP', 'REAL_GDP_PER_CAPITA', 'TREASURY_YIELD', 'FEDERAL_FUNDS_RATE', 'CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL']
-# EconIntervals = Literal['annual', 'quarterly', 'daily', 'weekly', 'monthly', 'semiannual']
-# EconMaturities = Literal['3month', '2year', '5year', '7year', '10year']
+class PositiveInteger(int):
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("PositiveInteger cannot be negative")
+        return super().__new__(cls, value)
 
-# Indicators = Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'VWAP', 'T3', 'MACD', 'MACDEXT', 'STOCH', 'STOCHF', 'RSI', 'STOCHRSI', 'WILLR', 'ADX', 'ADXR', 'APO', 'PPO', 'MOM', 'BOP', 'CCI', 'CMO', 'ROC', 'ROCR', 'AROON', 'AROONOSC', 'MFI', 'TRIX', 'ULTOSC', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'BBANDS', 'MIDPOINT', 'MIDPRICE', 'SAR', 'TRANGE', 'ATR', 'NATR', 'AD', 'ADOSC', 'OBV', 'HT_TRENDLINE', 'HT_SINE', 'HT_TRENDMODE', 'HT_DCPERIOD', 'HT_DCPHASE', 'HT_PHASOR']
-
-# INGESTION_METHODS = {
-#     (enum.DataType.STOCK, enum.IngestionType.STREAM): [
-#         {
-#             'function': Literal['TIME_SERIES_INTRADAY_EXTENDED'],
-#             'symbol': str,
-#             'interval': Literal['1min', '5min', '15min', '30min', '60min'],
-#             'slice': Literal['year1month1', 'year1month2', 'year1month3', 'year1month4', 'year1month5', 'year1month6', 'year1month7', 'year1month8', 'year1month9', 'year1month10', 'year1month11', 'year1month12', 'year2month1', 'year2month2', 'year2month3', 'year2month4', 'year2month5', 'year2month6', 'year2month7', 'year2month8', 'year2month9', 'year2month10', 'year2month11', 'year2month12'],
-#             'adjusted': Optional[bool],
-#             'apikey': str
-#         },
-#         {
-#             'function': Literal['TIME_SERIES_DAILY', 'TIME_SERIES_DAILY_ADJUSTED'],
-#             'symbol': str,
-#             'outputsize': 'full',
-#             'datatype': 'csv',
-#             'apikey': str
-#         },
-#         {
-#             'function': Literal['TIME_SERIES_WEEKLY', 'TIME_SERIES_WEEKLY_ADJUSTED', 'TIME_SERIES_MONTHLY'],
-#             'symbol': str,
-#             'datatype': 'csv',
-#             'apikey': str
-#         }
-#     ],
-#     (enum.DataType.ECON, enum.IngestionType.STREAM): [
-#         {
-#             'function': 'REAL_GDP',
-#             'interval': Optional[Literal['quarterly', 'annual']],
-#             'datatype': 'csv',
-#             'apikey': str
-#         },
-#         {
-#             'function': ['REAL_GDP_PER_CAPITA', 'FEDERAL_FUNDS_RATE', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL'],
-#             'datatype': 'csv',
-#             'apikey': str
-#         },
-#         {
-#             'function': 'TREASURY_YIELD',
-#             'interval': Optional[Literal['daily', 'weekly', 'monthly']],
-#             'maturity': Optional[Literal['3month', '2year', '5year', '7year', '10year', '30year']],
-#             'datatype': 'csv',
-#             'apikey': str
-#         },
-#         {
-#             'function': 'CPI',
-#             'interval': Optional[Literal['monthly', 'semiannual']],
-#             'datatype': 'csv',
-#             'apikey': str
-#         }
-#     ]
-# }
-
+class PositiveFloat(float):
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("PositiveFloat cannot be negative")
+        return super().__new__(cls, value)
 
 class AdvantageStockGrepper:
     """
@@ -157,8 +111,8 @@ class AdvantageStockGrepper:
     
     def market_news_sentiment_download(
             self,
-            tickers: Optional[str],
-            topics: Optional[Literal['blockchain', 'earnings', 'ipo', 'mergers_and_acquisitions', 'financial_markets', 'economy_fiscal', 'economy_monetary', 'economy_macro', 'energy_transportation', 'finance', 'life_sciences', 'manufacturing', 'real_estate', 'retail_wholesale', 'technology']],
+            tickers: Optional[str]=None,
+            topics: Optional[Literal['blockchain', 'earnings', 'ipo', 'mergers_and_acquisitions', 'financial_markets', 'economy_fiscal', 'economy_monetary', 'economy_macro', 'energy_transportation', 'finance', 'life_sciences', 'manufacturing', 'real_estate', 'retail_wholesale', 'technology']]=None,
             time_from: Optional[str]=None,
             time_to: Optional[str]=None,
             sort: Optional[Literal['LATEST', 'EARLIEST', 'RELEVANCE']]='LATEST',
@@ -187,7 +141,8 @@ class AdvantageStockGrepper:
         :param time_from: The time range of the news articles you are targeting, in YYYYMMDDTHHMM format. For example: time_from=20220410T0130. If time_from is specified but time_to is missing, the API will return articles published between the time_from value and the current time.
         :param time_to: The time range of the news articles you are targeting, in YYYYMMDDTHHMM format. For example: time_from=20220410T0130. If time_from is specified but time_to is missing, the API will return articles published between the time_from value and the current time.
         :param sort: By default, sort=LATEST and the API will return the latest articles first. You can also set sort=EARLIEST or sort=RELEVANCE based on your use case.
-        :param limit:
+        :param limit: The number of maximum matching results to be returned. If you are looking for an even higher output limit, please contact support@alphavantage.co to have your limit boosted.
+        :return: Downloaded data frame.
         """
         function = 'NEWS_SENTIMENT'
 
@@ -203,6 +158,9 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
+        if len(data) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
         return pd.json_normalize(data)
     
     def company_info_download(
@@ -212,9 +170,15 @@ class AdvantageStockGrepper:
         """
         This method returns the company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
         
-        :param function: The 
+        :param function: The function to retrieve different company related info.
+            1. OVERVIEW: The company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
+            2. INCOME_STATEMENT: The annual and quarterly income statements for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
+            3. BALANCE_SHEET: The annual and quarterly balance sheets for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
+            4. CASH_FLOW: The annual and quarterly cash flow for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
+            5. EARNINGS: The annual and quarterly earnings (EPS) for the company of interest. Quarterly data also includes analyst estimates and surprise metrics.
+        :param symbol: The symbol of the token of your choice. For example: symbol=IBM.
+        :return: Downloaded data frame.
         """
-        
         function = 'NEWS_SENTIMENT'
 
         url = self._construct_url(
@@ -224,196 +188,268 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
+        if len(data) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
         return pd.json_normalize(data)
-        
-        return
 
-    # def stock_download(
-    #     self,
-    #     symbol: Optional[Union[str, List[str]]],
-    #     interval: Intervals,
-    #     from_time: Optional[pd.Timestamp]=None,
-    #     to_time: Optional[pd.Timestamp]=None,
-    #     adjusted: bool=True) -> pd.DataFrame:
-    #     """
-    #     Download stock data from Alpha vantage Endpoint.
+    def listing_info_download(
+        self,
+        date: Optional[str],
+        state: Optional[Literal['active', 'delisted']]='active') -> pd.Timestamp:
+        """
+        This method returns a list of active or delisted US stocks and ETFs, either as of the latest trading day or at a specific time in history. The endpoint is positioned to facilitate equity research on asset lifecycle and survivorship.
 
-    #     :param symbol: A list or string representing symbol, such as IBM, MSFT, etc. If not supplied, watched_symbol from Configuration will be used.
-    #     :param interval: A timedelta representing interval. Currently, alpha advantage api supports 1min, 5min, 15min, 30min, 60min for interday data, and daily, weekly, monthly.
-    #     :param from_time: A timestamp representing the start time. If None is supplied, then no filtering is done.
-    #     :param to_time: A timestamp representing the to time. If None is supplied, then no filtering is done.
-    #     :param adjusted: Whether the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
-    #     :return: Downloaded dataframe.
-    #     """
-    #     if symbol is None:
-    #         symbol = configuration.Configuration.watched_symbol
+        :param date: If no date is set, the API endpoint will return a list of active or delisted symbols as of the latest trading day. If a date is set, the API endpoint will "travel back" in time and return a list of active or delisted symbols on that particular date in history. Any YYYY-MM-DD date later than 2010-01-01 is supported. For example, date=2013-08-03
+        :param state: By default, state=active and the API will return a list of actively traded stocks and ETFs. Set state=delisted to query a list of delisted assets.
+        :return: Downloaded data frame.
+        """
+        function = 'LISTING_STATUS'
 
-    #     args = expand_grid(ticker = symbol, year = range(1, 3), month = range(1, 13))
-    #     args['slice_str'] = 'year'+ args['year'].astype(str) + 'month' + args['month'].astype(str)
-    #     args['from_time'] = args.apply(lambda x: pd.Timestamp(datetime.now()) - pd.Timedelta(days=360*(x['year']-1)) - pd.Timedelta(days=30*x['month']), axis=1)
-    #     args['to_time'] = args['from_time'] + pd.Timedelta(days=30)
+        url = self._construct_url(
+            function = function,
+            date = date,
+            state = state,
+            apikey = self.api_key)
 
-    #     if from_time is not None:
-    #         from_time = find_nearest_in_list(from_time, args['from_time'], round_down=True)
-    #     else:
-    #         from_time = args['from_time'].min()
-    #     if to_time is not None:
-    #         to_time = find_nearest_in_list(to_time, args['to_time'], round_up=True)
-    #     else:
-    #         to_time = args['to_time'].max()
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
 
-    #     args = args.query(f'from_time >= {from_time} & to_time <= {to_time}')
-
-    #     args['interval'] = interval
-    #     args['adjusted'] = adjusted
-    #     args['api_key'] = self.api_key
-
-    #     if interval in ['1min', '5min', '15min', '30min', '60min']:
-    #         args['function_name'] = 'TIME_SERIES_INTRADAY_EXTENDED'
-    #     elif interval == 'daily':
-    #         args['function_name'] = 'TIME_SERIES_DAILY'
-    #     elif interval == 'weekly':
-    #         args['function_name'] = 'TIME_SERIES_WEEKLY'
-    #     else:
-    #         args['function_name'] = 'TIME_SERIES_MONTHLY'
-
-    #     if adjusted and interval in ['daily', 'weekly', 'monthly']:
-    #         args['function_name'] += '_ADJUSTED'
-
-    #     args['url'] = args.apply(lambda x: do_call(AdvantageStockGrepper._construct_url, **x.to_dict()))
-
-    #     result = []
-    #     for i in args.index:
-    #         url = args.loc[i,'url']
-    #         temp = pd.read_csv(url)
-    #         if len(temp.index) == 0:
-    #             warnings.warn(f'Reading from {url} results in 0 rows.')
-    #         else:
-    #             temp.loc['url'] = url
-    #         result.append(temp)
-
-    #     result = pd.concat(result).reset_index(drop=True)
-    #     result['timestamp'] = pd.to_datetime(result['timestamp'])
-    #     return result
-
-    # def econ_download(
-    #     self,
-    #     indicators: Union[List[EconIndicators], EconIndicators],
-    #     interval: Optional[EconIntervals],
-    #     maturity: Optional[EconMaturities],
-    #     from_time: Optional[pd.Timestamp]=None,
-    #     to_time: Optional[pd.Timestamp]=None) -> pd.DataFrame:
-    #     """
-    #     Download US economics data from Alpha vantage Endpoint.
-
-    #     Details on the choice of indicators: 
-    #     1. REAL_GDP: Real GDP of the United States
-    #     2. REAL_GDP_PER_CAPITA: Real GDP per Capita data of the United States
-    #     3. TREASURY_YIELD: US treasury yield of a given maturity timeline
-    #     4. FEDERAL_FUNDS_RATE: federal funds rate (interest rate) of the United States
-    #     5. CPI: consumer price index (CPI) of the United States. CPI is widely regarded as the barometer of inflation levels in the broader economy.
-    #     6. INFLATION: annual inflation rates (consumer prices) of the United States.
-    #     7. RETAIL_SALES: monthly Advance Retail Sales: Retail Trade data of the United States.
-    #     8. DURABLES: monthly manufacturers' new orders of durable goods in the United States.
-    #     9. UNEMPLOYMENT: monthly unemployment data of the United States. The unemployment rate represents the number of unemployed as a percentage of the labor force. 
-    #     10. NONFARM_PAYROLL: monthly US All Employees: Total Nonfarm (commonly known as Total Nonfarm Payroll), a measure of the number of U.S. workers in the economy that excludes proprietors, private household employees, unpaid volunteers, farm employees, and the unincorporated self-employed.
-
-    #     :param indicators: One of the economics indicators from U.S. Bureau of Economic Analysis, Real Gross Domestic Product, retrieved from FRED, Federal Reserve Bank of St. Louis.
-    #     :param interval: A timedelta representing interval. Currently, alpha advantage api supports 1min, 5min, 15min, 30min, 60min for interday data, and daily, weekly, monthly.
-    #     :param maturity: maturity timeline, only used when indicator is TREASURY_YIELD.
-    #     :param from_time: A timestamp representing the start time.
-    #     :param to_time: A timestamp representing the to time.
-    #     :return: Downloaded dataframe.
-    #     """
-    #     if indicators in ['REAL_GDP']:
-    #         assert interval in ['quarterly', 'annual']
-    #     elif indicators in ['TREASURY_YIELD']:
-    #         assert interval in ['daily', 'weekly', 'monthly']
-    #         assert maturity in ['3month', '2year', '5year', '7year', '10year', '30year']
-    #     elif indicators in ['FEDERAL_FUNDS_RATE']:
-    #         assert interval in ['daily', 'weekly', 'monthly']
-    #     elif indicators in ['CPI']:
-    #         assert interval in ['monthly', ' semiannual']
-    #     else:
-    #         interval = None
-    #         maturity = None
-
-    #     args = expand_grid(function_name = indicators, interval = interval, maturity = maturity)
-    #     args['api_key'] = self.api_key
-
-    #     args['url'] = args.apply(lambda x: do_call(AdvantageStockGrepper._construct_url, **x.to_dict()))
-
-    #     result = []
-    #     for i in args.index:
-    #         url = args.loc[i,'url']
-    #         temp = pd.read_csv(url)
-    #         if len(temp.index) == 0:
-    #             warnings.warn(f'Reading from {url} results in 0 rows.')
-    #         else:
-    #             temp.loc['url'] = url
-    #         result.append(temp)
-
-    #     result = pd.concat(result).reset_index(drop=True)
-    #     result['date'] = pd.to_datetime(result['date'])
-    #     result = result.query(f'date >= {from_time} & date <= {to_time}')
-    #     return result
+        return result
     
-    # def indicator_download(
-    #     self,
-    #     indicators: Union[List[Indicators], Indicators],
-    #     symbol: Optional[Union[str, List[str]]],
-    #     interval: Intervals,
-    #     time_period: int,
-    #     series_type: Literal['close', 'open', 'high', 'low'],
-    #     from_time: Optional[pd.Timestamp]=None,
-    #     to_time: Optional[pd.Timestamp]=None,
-    #     **additional_args) -> pd.DataFrame:
-    #     """
-    #     Download Technical indicators from Alpha vantage Endpoint.
+    def expected_earning_download(
+        self,
+        symbol: Optional[str],
+        horizon: Optional[Literal['3month', '6month', '12month']]) -> pd.Timestamp:
+        """
+        This method returns a list of company earnings expected in the next 3, 6, or 12 months.
+        
+        :param symbol: By default, no symbol will be set for this API. When no symbol is set, the API endpoint will return the full list of company earnings scheduled. If a symbol is set, the API endpoint will return the expected earnings for that specific symbol. For example, symbol=IBM.
+        :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively.
+        :return: Downloaded data frame.
+        """
+        function = 'EARNINGS_CALENDAR'
 
-    #     See wiki page for the representation of technical indicators.
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            horizon = horizon,
+            apikey = self.api_key)
 
-    #     :param indicators: One of the economics indicators from U.S. Bureau of Economic Analysis, Real Gross Domestic Product, retrieved from FRED, Federal Reserve Bank of St. Louis.
-    #     :param symbol: A list or string representing symbol, such as IBM, MSFT, etc. If not supplied, watched_symbol from Configuration will be used.
-    #     :param interval: Time interval between two consecutive data points in the time series.
-    #     :param time_period: Number of data points used to calculate each value. Positive integers are accepted.
-    #     :param from_time: A timestamp representing the start time.
-    #     :param to_time: A timestamp representing the to time.
-    #     :return: Downloaded dataframe.
-    #     """
-    #     if indicators in ['VWAP', 'STOCH', 'BOP', 'ULTOSC', 'SAR', 'TRANGE', 'AD', 'ADOSC', 'OBV']:
-    #         time_period = None
-    #         series_type = None
-    #     elif indicators in ['MAMA', 'MACD', 'MACDEXT', 'STOCHF', 'APO', 'PPO', 'HT_TRENDLINE', 'HT_SINE', 'HT_TRENDMODE', 'HT_DCPERIOD', 'HT_DCPHASE', 'HT_PHASOR']:
-    #         time_period = None
-    #     elif indicators in ['WILLR', 'ADX', 'ADX', 'CCI', 'AROON', 'AROONOSC', 'MFI', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'MIDPRICE', 'ATR', 'NATR']:
-    #         series_type = None
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
 
-    #     if symbol is None:
-    #         symbol = configuration.Configuration.watched_symbol
+        return result
 
-    #     additional_args['function_name'] = indicators
-    #     additional_args['symbol'] = symbol
-    #     additional_args['interval'] = interval
-    #     additional_args['time_period'] = time_period
-    #     additional_args['series_type'] = series_type
+    def ipo_calendar_download(self) -> pd.Timestamp:
+        """
+        This method returns a list of IPOs expected in the next 3 months.
 
-    #     args = expand_grid(**additional_args)
-    #     args['api_key'] = self.api_key
+        :return: Downloaded data frame.
+        """
+        function = 'IPO_CALENDAR'
 
-    #     args['url'] = args.apply(lambda x: do_call(AdvantageStockGrepper._construct_url, **x.to_dict()))
+        url = self._construct_url(function = function, apikey = self.api_key)
 
-    #     result = []
-    #     for i in args.index:
-    #         url = args.loc[i,'url']
-    #         temp = pd.read_csv(url)
-    #         if len(temp.index) == 0:
-    #             warnings.warn(f'Reading from {url} results in 0 rows.')
-    #         else:
-    #             temp.loc['url'] = url
-    #         result.append(temp)
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
 
-    #     result = pd.concat(result).reset_index(drop=True)
-    #     result['date'] = pd.to_datetime(result['date'])
-    #     result = result.query(f'date >= {from_time} & date <= {to_time}')
-    #     return result
+        return result
+
+    def moving_average_indicator_download(
+        self, 
+        function: Literal['SMA', 'EMA', 'WMA', 'DEMA', 'TEMA', 'TRIMA', 'KAMA', 'MAMA', 'T3'],
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        time_period: PositiveInt,
+        series_type: Literal['close', 'open', 'high', 'low'],
+        fastlimit: PositiveFloat=0.01,
+        slowlimit: PositiveFloat=0.01) -> pd.Timestamp:
+        """
+        This method returns moving average indicators of prices.
+
+        :param function: The function to retrieve different moving average indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. SMA: Simple moving average (SMA) values.
+            2. EMA: Exponential moving average (EMA) values.
+            3. WMA: Weighted moving average (WMA) values.
+            4. DEMA: Double exponential moving average (DEMA) values.
+            5. TEMA: Triple exponential moving average (TEMA) values.
+            6. TRIMA: Triangular moving average (TRIMA) values.
+            7. KAMA: Kaufman adaptive moving average (KAMA) values.
+            8. MAMA: MESA adaptive moving average (MAMA) values.
+            9. T3: Triple exponential moving average (T3) values.
+        :param symbol: The name of the token of your choice.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param fastlimit: Positive floats are accepted. By default, fastlimit=0.01.
+        :param slowlimit: Positive floats are accepted. By default, slowlimit=0.01.
+        :return: Downloaded data frame.
+        """
+        if function != 'MAMA':
+            fastlimit = None
+            slowlimit = None
+
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            interval = interval,
+            time_period = time_period,
+            series_type = series_type,
+            fastlimit = fastlimit,
+            slowlimit = slowlimit,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def volume_weighted_average_price_indicator_download(
+        self, 
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min']) -> pd.Timestamp:
+        """
+        This method returns the volume weighted average price (VWAP) for intraday time series. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+
+        :param symbol: The name of the token of your choice.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min.
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = 'VWAP',
+            symbol = symbol,
+            interval = interval,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def moving_average_convergence_indicator_download(
+        self,
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        series_type: Literal['close', 'open', 'high', 'low'],
+        fastperiod: Optional[PositiveInt]=12,
+        slowperiod: Optional[PositiveInt]=26,
+        signalperiod: Optional[PositiveInt]=9,
+        fastmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
+        slowmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0,
+        signalmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0) -> pd.Timestamp:
+        """
+        This method returns the moving average convergence / divergence indicators with controllable moving average type. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+
+        :param symbol: The name of the token of your choice.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param fastperiod: Positive integers are accepted. By default, fastperiod=12.
+        :param slowperiod: Positive integers are accepted. By default, fastperiod=26.
+        :param signalperiod: Positive integers are accepted. By default, signalperiod=9.
+        :param fastmatype: Moving average type for the faster moving average. By default, fastmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :param slowmatype: Moving average type for the slower moving average. By default, slowmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :param signalmatype: Moving average type for the signal moving average. By default, signalmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = 'MACDEXT',
+            symbol = symbol,
+            interval = interval,
+            series_type = series_type,
+            fastperiod = fastperiod,
+            slowperiod = slowperiod,
+            signalperiod = signalperiod,
+            fastmatype = fastmatype,
+            slowmatype = slowmatype,
+            signalmatype = signalmatype,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+    
+    def rsi_indicator_download(
+        self,
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        time_period: PositiveInt,
+        series_type: Literal['close', 'open', 'high', 'low']) -> pd.Timestamp:
+        """
+        This method returns the relative strength index(RSI) values. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+
+        :param symbol: The name of the token of your choice.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = 'RSI',
+            symbol = symbol,
+            interval = interval,
+            time_period = time_period,
+            series_type = series_type,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+
+    def stochastic_oscillator_indicator_download(
+        self,
+        function: Literal['STOCH', 'STOCHF', 'STOCHRSI'],
+        symbol: str,
+        interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly'],
+        time_period: PositiveInt,
+        series_type: Literal['close', 'open', 'high', 'low'],
+        fastkperiod: Optional[PositiveInt],
+        fastdperiod: Optional[PositiveInt],
+        fastdmatype: Optional[Literal[0, 1, 2, 3, 4, 5, 6, 7, 8]]=0) -> pd.Timestamp:
+        """
+        This method returns the stochastic oscilator indicator values. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+
+        :param function: The function to retrieve different stochastic oscillator indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
+            1. STOCH: stochastic oscillator (STOCH) values.
+            2. STOCHF: stochastic fast (STOCHF) values.
+            3. STOCHRSI: stochastic relative strength index (STOCHRSI) values.
+        :param symbol: The name of the token of your choice.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
+        :param fastkperiod: The time period of the fastk moving average. Positive integers are accepted. By default, fastkperiod=5.
+        :param fastdperiod: The time period of the fastd moving average. Positive integers are accepted. By default, fastdperiod=3.
+        :param fastdmatype: Moving average type for the fastd moving average. By default, fastdmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = function,
+            symbol = symbol,
+            interval = interval,
+            time_period = time_period,
+            series_type = series_type,
+            fastkperiod = fastkperiod,
+            fastdperiod = fastdperiod,
+            fastdmatype = fastdmatype,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
