@@ -376,16 +376,16 @@ class AdvantageStockGrepper:
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Not used when function is WILLR, AROON, AROONOSC.
-        :param fastperiod: Positive integers are accepted. By default, fastperiod=12.
-        :param slowperiod: Positive integers are accepted. By default, slowperiod=26.
-        :param matype: Moving average type. By default, matype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential
-            Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
-        :param fastkperiod: The time period of the fastk moving average. Positive integers are accepted. By default, fastkperiod=5.
-        :param slowkperiod: The time period of the slowk moving average. Positive integers are accepted. By default, slowkperiod=3.
-        :param slowdperiod: The time period of the slowd moving average. Positive integers are accepted. By default, slowdperiod=3.
-        :param slowkmatype: Moving average type for the slowk moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
-        :param slowdmatype: Moving average type for the slowd moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA).
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Not used when function is CCI, MFI.
+        :param fastperiod: Positive integers are accepted. By default, fastperiod=12. Only used when function is APO and PPO.
+        :param slowperiod: Positive integers are accepted. By default, slowperiod=26. Only used when function is APO and PPO.
+        :param matype: Moving average type. By default, matype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA). Only used when function is APO and PPO.
+        :param fastkperiod: The time period of the fastk moving average. Positive integers are accepted. By default, fastkperiod=5. Only used when function is STOCH and STOCHF.
+        :param slowkperiod: The time period of the slowk moving average. Positive integers are accepted. By default, slowkperiod=3. Only used when function is STOCH and STOCHF.
+        :param slowdperiod: The time period of the slowd moving average. Positive integers are accepted. By default, slowdperiod=3. Only used when function is STOCH and STOCHF.
+        :param slowkmatype: Moving average type for the slowk moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving
+        Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA). Only used when function is STOCH and STOCHF.
+        :param slowdmatype: Moving average type for the slowd moving average. By default, slowkmatype=0. Integers 0 - 8 are accepted with the following mappings. 0 = Simple Moving Average (SMA), 1 = Exponential Moving Average (EMA), 2 = Weighted Moving Average (WMA), 3 = Double Exponential Moving Average (DEMA), 4 = Triple Exponential Moving Average (TEMA), 5 = Triangular Moving Average (TRIMA), 6 = T3 Moving Average, 7 = Kaufman Adaptive Moving Average (KAMA), 8 = MESA Adaptive Moving Average (MAMA). Only used when function is STOCH and STOCHF.
         :return: Downloaded data frame.
         """
         if function not in ['APO', 'PPO']:
@@ -444,8 +444,8 @@ class AdvantageStockGrepper:
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. In keeping with mainstream investment literatures on VWAP, the following intraday intervals are supported: 1min, 5min, 15min, 30min, 60min. For other indicators, the following values are supported: 1min,
             5min, 15min, 30min, 60min, daily, weekly, monthly.
-        :param fastperiod: The time period of the fast EMA. Positive integers are accepted. By default, fastperiod=3.
-        :param slowperiod: The time period of the slow EMA. Positive integers are accepted. By default, slowperiod=10.
+        :param fastperiod: The time period of the fast EMA. Positive integers are accepted. By default, fastperiod=3. Only used when function is ADOSC.
+        :param slowperiod: The time period of the slow EMA. Positive integers are accepted. By default, slowperiod=10. Only used when function is ADOSC.
         :return: Downloaded data frame.
         """
         if function not in ['ADOSC']:
@@ -522,11 +522,11 @@ class AdvantageStockGrepper:
             8. HT_PHASOR: Hilbert transform, phasor components (HT_PHASOR) values.
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
-        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low.
-        :param timeperiod1: The first time period for the indicator. Positive integers are accepted. By default, timeperiod1=7.
-        :param timeperiod2: The second time period for the indicator. Positive integers are accepted. By default, timeperiod2=14.
-        :param timeperiod3: The third time period for the indicator. Positive integers are accepted. By default, timeperiod3=28.
+        :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200). Only used when function is CMO.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Only used when function is CMO.
+        :param timeperiod1: The first time period for the indicator. Positive integers are accepted. By default, timeperiod1=7. Only used when function is ULTOSC.
+        :param timeperiod2: The second time period for the indicator. Positive integers are accepted. By default, timeperiod2=14. Only used when function is ULTOSC.
+        :param timeperiod3: The third time period for the indicator. Positive integers are accepted. By default, timeperiod3=28. Only used when function is ULTOSC.
         :return: Downloaded data frame.
         """
         if series_type not in ['ULTOSC']:
