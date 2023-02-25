@@ -9,6 +9,8 @@ from typing import Literal, Optional, NewType
 import pandas as pd
 import requests
 
+from buffalo.utility import concat_list
+
 from . import configuration, enum
 
 PositiveInt = NewType('PositiveInt', int)
@@ -91,6 +93,29 @@ class AdvantageStockGrepper:
 
         return result
 
+    def currency_exchange_download(
+            self,
+            from_currency: str,
+            to_currecy: str) -> pd.DataFrame:
+        """ This method returns the realtime exchange rate for a pair of digital currency (e.g., Bitcoin) and physical currency (e.g., USD).
+
+        :param from_currency: The currency you would like to get the exchange rate for. It can either be a physical currency or digital/crypto currency. For example: from_currency=USD or from_currency=BTC.
+        :param to_currency: The destination currency for the exchange rate. It can either be a physical currency or digital/crypto currency. For example: to_currency=USD or to_currency=BTC.
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = 'CURRENCY_EXCHANGE_RATE',
+            from_currency = from_currency,
+            to_currecy = to_currecy,
+            apikey = self.api_key)
+
+        response = requests.get(url, timeout=10)
+        data = json.loads(response.text)
+        if len(data) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return pd.json_normalize(data)
+
     def forex_download(
             self,
             from_symbol: str,
@@ -130,29 +155,6 @@ class AdvantageStockGrepper:
 
         return result
 
-    def currency_exchange_download(
-            self,
-            from_currency: str,
-            to_currecy: str) -> pd.DataFrame:
-        """ This method returns the realtime exchange rate for a pair of digital currency (e.g., Bitcoin) and physical currency (e.g., USD).
-
-        :param from_currency: The currency you would like to get the exchange rate for. It can either be a physical currency or digital/crypto currency. For example: from_currency=USD or from_currency=BTC.
-        :param to_currency: The destination currency for the exchange rate. It can either be a physical currency or digital/crypto currency. For example: to_currency=USD or to_currency=BTC.
-        :return: Downloaded data frame.
-        """
-        url = self._construct_url(
-            function = 'CURRENCY_EXCHANGE_RATE',
-            from_currency = from_currency,
-            to_currecy = to_currecy,
-            apikey = self.api_key)
-
-        response = requests.get(url, timeout=10)
-        data = json.loads(response.text)
-        if len(data) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return pd.json_normalize(data)
-
     def crypto_exchange_download(
             self,
             digital_symbol: str,
@@ -179,6 +181,47 @@ class AdvantageStockGrepper:
             symbol = digital_symbol,
             market = physical_symbol,
             outputsize = outputsize,
+            interval = interval,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+    
+    def econ_indicator_download(
+            self,
+            function: Literal['REAL_GDP', 'REAL_GDP_PER_CAPITA', 'TREASURY_YIELD', 'FEDERAL_FUNDS_RATE', 'CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL'],
+            interval: Optional[Literal['daily', 'weekly', 'monthly', 'quarterly', 'semiannual', 'annual']]='monthly',
+            maturity: Optional[Literal['3month', '2year', '5year', '7year', '10year', '30year']]='30year') -> pd.Timestamp:
+        """
+        This method provides key US economic indicators frequently used for investment strategy formulation and application development.
+
+        :param function:
+        :param interval:
+        :param maturity:
+        :return: Downloaded data frame.
+        """
+        if function == 'REAL_GDP':
+            acceptable_intervals = [None, 'quarterly', 'annual']
+            assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
+        elif function in ['TREASURY_YIELD', 'FEDERAL_FUNDS_RATE']:
+            acceptable_intervals = [None, 'daily', 'weekly', 'monthly']
+            assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
+        elif function in ['CPI']:
+            acceptable_intervals = [None, 'monthly', 'semiannual']
+            assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
+        else:
+            interval = None
+
+        if function != 'TREASURY_YIELD':
+            maturity = None
+
+        url = self._construct_url(
+            function = function,
+            maturity = maturity,
             interval = interval,
             datatype = 'csv',
             apikey = self.api_key)
