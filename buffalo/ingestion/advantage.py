@@ -61,7 +61,7 @@ class AdvantageStockGrepper:
         This method returns raw (as-traded) intraday/daily/weekly/monthly time series (date, open, high, low, close, volume) of the global equity specified, covering 20+ years of historical data. If you are also interested in split/dividend-adjusted historical data, please use the Daily Adjusted API, which covers adjusted close values and historical split and dividend events.
 
         :param symbol: The name of the equity of your choice. For example: symbol=IBM.
-        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: daily, weekly, monthly.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param year_slice: Two years of minute-level intraday data contains over 2 million data points, which can take up to Gigabytes of memory. To ensure optimal API response speed, the trailing 2 years of intraday data is evenly divided into 24 "slices" - year1month1, year1month2, year1month3, ..., year1month11, year1month12, year2month1, year2month2, year2month3, ..., year2month11, year2month12. Each slice is a 30-day window, with year1month1 being the most recent and year2month12 being the farthest from today. By default, slice=year1month1. 
         :param adjusted: By default, adjusted=true and the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
         :return: Downloaded data frame.
@@ -74,6 +74,7 @@ class AdvantageStockGrepper:
         if adjusted and interval in ['daily', 'weekly', 'monthly']:
             function += '_ADJUSTED'
             adjusted = None
+            interval = None
 
         url = self._construct_url(
             function = function,
@@ -83,6 +84,121 @@ class AdvantageStockGrepper:
             outputsize = 'full',
             datatype = 'csv',
             apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def forex_download(
+            self,
+            from_symbol: str,
+            to_symbol: str,
+            interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']) -> pd.DataFrame:
+        """
+        This API returns intraday/daily/weekly/montly time series (timestamp, open, high, low, close) of the FX currency pair specified, updated realtime.
+
+        :param from_symbol: A three-letter symbol from the forex currency list. For example: from_symbol=EUR
+        :param to_symbol: A three-letter symbol from the forex currency list. For example: to_symbol=USD
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: realtime, 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly. 
+        :return: Downloaded data frame.
+        """
+        if interval in ['daily', 'weekly', 'monthly']:
+            function = 'FX_' + interval.upper()
+
+            if interval in ['weekly', 'monthly']:
+                outputsize = None
+            else:
+                outputsize = 'full'
+            interval = None
+        else:
+            function = 'FX_INTRADAY'
+
+        url = self._construct_url(
+            function = function,
+            from_symbol = from_symbol,
+            to_symbol = to_symbol,
+            outputsize = outputsize,
+            interval = interval,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def currency_exchange_download(
+            self,
+            from_currency: str,
+            to_currecy: str) -> pd.DataFrame:
+        """ This method returns the realtime exchange rate for a pair of digital currency (e.g., Bitcoin) and physical currency (e.g., USD).
+
+        :param from_currency: The currency you would like to get the exchange rate for. It can either be a physical currency or digital/crypto currency. For example: from_currency=USD or from_currency=BTC.
+        :param to_currency: The destination currency for the exchange rate. It can either be a physical currency or digital/crypto currency. For example: to_currency=USD or to_currency=BTC.
+        :return: Downloaded data frame.
+        """
+        url = self._construct_url(
+            function = 'CURRENCY_EXCHANGE_RATE',
+            from_currency = from_currency,
+            to_currecy = to_currecy,
+            apikey = self.api_key)
+
+        response = requests.get(url, timeout=10)
+        data = json.loads(response.text)
+        if len(data) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return pd.json_normalize(data)
+
+    def crypto_exchange_download(
+            self,
+            digital_symbol: str,
+            physical_symbol: str,
+            interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']) -> pd.DataFrame:
+        """
+        This method returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close, volume) of the cryptocurrency specified, updated realtime.
+
+        :param digital_symbol: The digital/crypto currency of your choice. It can be any of the currencies in the digital currency list. For example: digital_symbol=ETH.
+        :param physical_symbol: The exchange market of your choice. It can be any of the market in the market list. For example: physical_symbol=USD.
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :return: Downloaded data frame.
+        """
+        if interval in ['daily', 'weekly', 'monthly']:
+            function = 'DIGITAL_CURRENCY' + interval.upper()
+            interval = None
+            outputsize = None
+        else:
+            function = 'CRYPTO_INTRADAY'
+            outputsize = 'full'
+
+        url = self._construct_url(
+            function = function,
+            symbol = digital_symbol,
+            market = physical_symbol,
+            outputsize = outputsize,
+            interval = interval,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
+
+    def currency_list_download(self, currency: Literal['physical', 'digital']='physical'):
+        """
+        This method returns the realtime exchange rate for a pair of digital currency (e.g., Bitcoin) and physical currency (e.g., USD).
+
+        :param currency: Either physical currency or digital/crypto currency.
+        """
+        if currency == 'physical':
+            url = 'https://www.alphavantage.co/physical_currency_list/'
+        else:
+            url = 'https://www.alphavantage.co/digital_currency_list/'
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
