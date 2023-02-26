@@ -190,6 +190,47 @@ class AdvantageStockGrepper:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
         return result
+
+    def commodity_price_download(
+            self,
+            commodity: Literal['WTI', 'BRENT', 'NATURAL_GAS', 'COPPER', 'ALUMINUM', 'WHEAT', 'CORN', 'COTTON', 'SUGAR', 'COFFEE', 'ALL_COMMODITIES'],
+            interval:Optional[Literal['daily', 'weekly', 'monthly', 'quarterly', 'annual']]='monthly') -> pd.Timestamp:
+        """
+        This method provides historical data for major commodities such as crude oil, natural gas, copper, wheat, etc., spanning across various temporal horizons (daily, weekly, monthly, quarterly, etc.)
+
+        :param commodity: The commodity to be downloaded.
+            1. WTI: West Texas Intermediate (WTI) crude oil prices.
+            2. BRENT: Brent (Europe) crude oil prices.
+            3. NATURAL_GAS: Henry Hub natural gas spot prices.
+            4. COPPER: global price of copper.
+            5. ALUMINUM: global price of aluminum.
+            6. WHEAT: global price of wheat.
+            7. CORN: global price of corn.
+            8. COTTON: global price of cotton.
+            9. SUGAR: global price of sugar.
+            10. COFFEE: global price of coffee.
+            11. ALL_COMMODITIES: global price index of all commodities.
+        :param interval: By default, interval=monthly. For commodity equals WTI, BRENT, NATURAL_GAS, strings daily, weekly, monthly are accepted. For other commodities, monthly, quarterly, annual are accepted.
+        :return: Downloaded data frame.
+        """
+        if commodity in ['WTI', 'BRENT', 'NATURAL_GAS']:
+            acceptable_intervals = [None, 'daily', 'weekly', 'monthly']
+            assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
+        else:
+            acceptable_intervals = [None, 'monthly', 'quarterly', 'annual']
+            assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
+
+        url = self._construct_url(
+            function = commodity,
+            interval = interval,
+            datatype = 'csv',
+            apikey = self.api_key)
+
+        result = pd.read_csv(url)
+        if len(result.index) == 0:
+            warnings.warn(f'Reading from {url} results in 0 rows.')
+
+        return result
     
     def econ_indicator_download(
             self,
@@ -199,9 +240,19 @@ class AdvantageStockGrepper:
         """
         This method provides key US economic indicators frequently used for investment strategy formulation and application development.
 
-        :param function:
-        :param interval:
-        :param maturity:
+        :param function: The economic indicators to be returned.
+            1. REAL_GDP: annual and quarterly Real GDP of the United States.
+            2. REAL_GDP_PER_CAPITA: quarterly Real GDP per Capita data of the United States.
+            3. TREASURY_YIELD: daily, weekly, and monthly US treasury yield of a given maturity timeline.
+            4. FEDERAL_FUNDS_RATE: daily, weekly, and monthly federal funds rate (interest rate) of the United States.
+            5. CPI: monthly and semiannual consumer price index (CPI) of the United States. CPI is widely regarded as the barometer of inflation levels in the broader economy.
+            6. INFLATION: annual inflation rates (consumer prices) of the United States.
+            7. RETAIL_SALES: monthly Advance Retail Sales: Retail Trade data of the United States.
+            8. DURABLES: monthly manufacturers' new orders of durable goods in the United States.
+            9. UNEMPLOYMENT: monthly unemployment data of the United States. The unemployment rate represents the number of unemployed as a percentage of the labor force. Labor force data are restricted to people 16 years of age and older, who currently reside in 1 of the 50 states or the District of Columbia, who do not reside in institutions (e.g., penal and mental facilities, homes for the aged), and who are not on active duty in the Armed Forces (source).
+            10. NONFARM_PAYROLL: monthly US All Employees: Total Nonfarm (commonly known as Total Nonfarm Payroll), a measure of the number of U.S. workers in the economy that excludes proprietors, private household employees, unpaid volunteers, farm employees, and the unincorporated self-employed.
+        :param interval: One of 'daily', 'weekly', 'monthly', 'quarterly', 'semiannual', 'annual'. The acceptable value depends on the function provided.
+        :param maturity: By default, maturity=10year. Strings 3month, 2year, 5year, 7year, 10year, and 30year are accepted. Only used when function is TREASURY_YIELD.
         :return: Downloaded data frame.
         """
         if function == 'REAL_GDP':
