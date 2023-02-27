@@ -9,20 +9,22 @@ import pandas as pd
 from buffalo.utility import concat_list, create_parent_directory
 
 from . import advantage, enum
-
+from .configuration import Configuration
 
 class DataIngestion:
     """
     This is the endpoint for accessing data ingestion class.
     """
 
-    def __init__(self, end_points: Union[enum.API, List[enum.API]]) -> None:
+    def __init__(self, end_points: Optional[Union[enum.API, List[enum.API]]]) -> None:
         """
         Initializer for DataIngestion class
 
         :param end_points: The endpoints to be used, functions are used 
         """
         self.data = pd.DataFrame()
+        if end_points is None:
+            end_points = Configuration.api_keys.keys()
         self.end_points = {}
         if isinstance(end_points, enum.API):
             end_points = [end_points]

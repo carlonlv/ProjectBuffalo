@@ -4,7 +4,7 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import Literal, NewType, Optional
+from typing import Literal, NewType, Optional, Dict, Callable
 
 import pandas as pd
 import requests
@@ -40,6 +40,30 @@ class AdvantageStockGrepper:
 
     def __init__(self) -> None:
         self.api_key = configuration.Configuration.api_keys[enum.API.ADVANTAGE]
+        self.ingestion_methods = {
+            (enum.DataType.STOCK, enum.IngestionType.REST): self.stock_download,
+            (enum.DataType.CRYPTO, enum.IngestionType.REST): self.crypto_exchange_download,
+            (enum.DataType.FOREX, enum.IngestionType.REST): self.forex_download,
+            (enum.DataType.COMPARY, enum.IngestionType.REST): self.company_info_download,
+            (enum.DataType.ECON, enum.IngestionType.REST): self.econ_download,
+            (enum.DataType.TREND_INDICATOR, enum.IngestionType.REST): self.trend_indicator_download,
+            (enum.DataType.CYCLE_INDICATOR, enum.IngestionType.REST): self.cycle_indicator_download,
+            (enum.DataType.MOMENTUM_INDICATOR, enum.IngestionType.REST): self.momentum_indicator_download,
+            (enum.DataType.OSCILLATOR_INDICATOR, enum.IngestionType.REST): self.oscillator_indicator_download,
+            (enum.DataType.VOLATILITY_INDICATOR, enum.IngestionType.REST): self.volatility_indicator_download,
+            (enum.DataType.VOLUME_INDICATOR, enum.IngestionType.REST): self.volume_indicator_download,
+            (enum.DataType.STOCK_LISTING, enum.IngestionType.REST): self.listing_info_download,
+            (enum.DataType.MARKET_NEWS, enum.IngestionType.REST): self.market_news_sentiment_download,
+            (enum.DataType.IPO_CALENDAR, enum.IngestionType.REST): self.ipo_calendar_download
+        }
+
+    @property
+    def ingestion_methods(self) -> Dict[(enum.DataType, enum.IngestionType), Callable]:
+        """
+        Called by higher level classes, used to access different ingestion methods.
+        :return: Returns a dictionary with keys being a tuple of DataType and IngestionType, and the values being a method.
+        """
+        return self.ingestion_methods
 
     def _construct_url(self, **kwargs) -> str:
         """ Construct url from key word arguments.
@@ -232,7 +256,7 @@ class AdvantageStockGrepper:
 
         return result
     
-    def econ_indicator_download(
+    def econ_download(
             self,
             function: Literal['REAL_GDP', 'REAL_GDP_PER_CAPITA', 'TREASURY_YIELD', 'FEDERAL_FUNDS_RATE', 'CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL'],
             interval: Optional[Literal['daily', 'weekly', 'monthly', 'quarterly', 'semiannual', 'annual']]='monthly',
