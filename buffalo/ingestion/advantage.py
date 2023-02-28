@@ -4,33 +4,13 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import Literal, NewType, Optional, Dict, Callable
+from typing import Callable, Dict, Literal, NewType, Optional, Tuple
 
 import pandas as pd
 import requests
 
-from buffalo.utility import concat_list
-
+from ..utility import concat_list, PositiveInt, PositiveFlt
 from . import configuration, enum
-
-PositiveInt = NewType('PositiveInt', int)
-PositiveFlt = NewType('PositiveFloat', float)
-
-class PositiveInteger(int):
-    """ Custom data type of positive integer to enforce type checking.
-    """
-    def __new__(cls, value):
-        if value < 0:
-            raise ValueError("PositiveInteger cannot be negative")
-        return super().__new__(cls, value)
-
-class PositiveFloat(float):
-    """ Custom data type of positive float to enforce type checking.
-    """
-    def __new__(cls, value):
-        if value < 0:
-            raise ValueError("PositiveFloat cannot be negative")
-        return super().__new__(cls, value)
 
 class AdvantageStockGrepper:
     """
@@ -39,8 +19,8 @@ class AdvantageStockGrepper:
     url_base = r'https://www.alphavantage.co/query?'
 
     def __init__(self) -> None:
-        self.api_key = configuration.Configuration.api_keys[enum.API.ADVANTAGE]
-        self.ingestion_methods = {
+        self._api_key = configuration.Configuration.api_keys[enum.API.ADVANTAGE]
+        self._ingestion_methods = {
             (enum.DataType.STOCK, enum.IngestionType.REST): self.stock_download,
             (enum.DataType.CRYPTO, enum.IngestionType.REST): self.crypto_exchange_download,
             (enum.DataType.FOREX, enum.IngestionType.REST): self.forex_download,
@@ -58,12 +38,20 @@ class AdvantageStockGrepper:
         }
 
     @property
-    def ingestion_methods(self) -> Dict[(enum.DataType, enum.IngestionType), Callable]:
+    def ingestion_methods(self) -> Dict[Tuple[enum.DataType, enum.IngestionType], Callable]:
         """
         Called by higher level classes, used to access different ingestion methods.
         :return: Returns a dictionary with keys being a tuple of DataType and IngestionType, and the values being a method.
         """
-        return self.ingestion_methods
+        return self._ingestion_methods
+
+    @property
+    def api_key(self) -> str:
+        """
+        Getter for api_key property.
+        :return: Returns a string of api key.
+        """
+        return self._api_key
 
     def _construct_url(self, **kwargs) -> str:
         """ Construct url from key word arguments.
@@ -88,7 +76,7 @@ class AdvantageStockGrepper:
 
         :param symbol: The name of the equity of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
-        :param year_slice: Two years of minute-level intraday data contains over 2 million data points, which can take up to Gigabytes of memory. To ensure optimal API response speed, the trailing 2 years of intraday data is evenly divided into 24 "slices" - year1month1, year1month2, year1month3, ..., year1month11, year1month12, year2month1, year2month2, year2month3, ..., year2month11, year2month12. Each slice is a 30-day window, with year1month1 being the most recent and year2month12 being the farthest from today. By default, slice=year1month1. 
+        :param year_slice: Two years of minute-level intraday data contains over 2 million data points, which can take up to Gigabytes of memory. To ensure optimal API response speed, the trailing 2 years of intraday data is evenly divided into 24 "slices" - year1month1, year1month2, year1month3, ..., year1month11, year1month12, year2month1, year2month2, year2month3, ..., year2month11, year2month12. Each slice is a 30-day window, with year1month1 being the most recent and year2month12 being the farthest from today. By default, slice=year1month1.
         :param adjusted: By default, adjusted=true and the output time series is adjusted by historical split and dividend events. Set adjusted=false to query raw (as-traded) intraday values.
         :return: Downloaded data frame.
         """
@@ -109,7 +97,7 @@ class AdvantageStockGrepper:
             slice = year_slice,
             outputsize = 'full',
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -131,7 +119,7 @@ class AdvantageStockGrepper:
             function = 'CURRENCY_EXCHANGE_RATE',
             from_currency = from_currency,
             to_currecy = to_currecy,
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
@@ -150,7 +138,7 @@ class AdvantageStockGrepper:
 
         :param from_symbol: A three-letter symbol from the forex currency list. For example: from_symbol=EUR
         :param to_symbol: A three-letter symbol from the forex currency list. For example: to_symbol=USD
-        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: realtime, 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly. 
+        :param interval: Time interval between two consecutive data points in the time series. The following values are supported: realtime, 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :return: Downloaded data frame.
         """
         if interval in ['daily', 'weekly', 'monthly']:
@@ -171,7 +159,7 @@ class AdvantageStockGrepper:
             outputsize = outputsize,
             interval = interval,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -207,7 +195,7 @@ class AdvantageStockGrepper:
             outputsize = outputsize,
             interval = interval,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -248,14 +236,14 @@ class AdvantageStockGrepper:
             function = commodity,
             interval = interval,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
         return result
-    
+
     def econ_download(
             self,
             function: Literal['REAL_GDP', 'REAL_GDP_PER_CAPITA', 'TREASURY_YIELD', 'FEDERAL_FUNDS_RATE', 'CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL'],
@@ -299,7 +287,7 @@ class AdvantageStockGrepper:
             maturity = maturity,
             interval = interval,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -339,7 +327,7 @@ class AdvantageStockGrepper:
         :param tickers: The stock/crypto/forex symbols of your choice. For example: tickers=IBM will filter for articles that mention the IBM ticker; tickers=COIN,CRYPTO:BTC,FOREX:USD will filter for articles that simultaneously mention Coinbase (COIN), Bitcoin (CRYPTO:BTC), and US Dollar (FOREX:USD) in their content.
         :param topics: The news topics of your choice. For example: topics=technology will filter for articles that write about the technology sector; topics=technology,ipo will filter for articles that simultaneously cover technology and IPO in their content. Below is the full list of supported topics:
             1. Blockchain: blockchain
-            2. Earnings: earnings 
+            2. Earnings: earnings
             3. IPO: ipo
             4. Mergers & Acquisitions: mergers_and_acquisitions
             5. Financial Markets: financial_markets
@@ -369,7 +357,7 @@ class AdvantageStockGrepper:
             time_to = time_to,
             sort = sort,
             limit = limit,
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
@@ -390,7 +378,7 @@ class AdvantageStockGrepper:
         ticker_lst = pd.concat(ticker_lst)
 
         result = result.drop(columns=['topics', 'ticker_sentiment'])
-        
+
         return result.merge(topic_lst), result.merge(ticker_lst)
 
     def company_info_download(
@@ -400,7 +388,7 @@ class AdvantageStockGrepper:
         horizon: Optional[Literal['3month', '6month', '12month']]='3month') -> pd.DataFrame:
         """
         This method returns the company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
-        
+
         :param function: The function to retrieve different company related info.
             1. OVERVIEW: The company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
             2. INCOME_STATEMENT: The annual and quarterly income statements for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
@@ -415,7 +403,7 @@ class AdvantageStockGrepper:
             function = function,
             symbol = symbol,
             horizon = horizon,
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
@@ -439,7 +427,7 @@ class AdvantageStockGrepper:
             function = 'LISTING_STATUS',
             date = date,
             state = state,
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -455,7 +443,7 @@ class AdvantageStockGrepper:
         """
         function = 'IPO_CALENDAR'
 
-        url = self._construct_url(function = function, apikey = self.api_key)
+        url = self._construct_url(function = function, apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -490,7 +478,7 @@ class AdvantageStockGrepper:
             7. KAMA: Kaufman adaptive moving average (KAMA) values.
             8. MAMA: MESA adaptive moving average (MAMA) values.
             9. T3: Triple exponential moving average (T3) values.
-            10. ADX: Average directional movement index (ADX) values. 
+            10. ADX: Average directional movement index (ADX) values.
             11. ADXR: Average directional movement index rating (ADXR) values.
             12. DX: Directional movement index (DX) values.
             13. MINUS_DI: Minus directional indicator (MINUS_DI) values.
@@ -548,7 +536,7 @@ class AdvantageStockGrepper:
             nbdevdn = nbdevdn,
             matype = matype,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -570,7 +558,7 @@ class AdvantageStockGrepper:
             1. RSI: Relative strength index (RSI) values.
             2. WILLR: Williams' %R (WILLR) values.
             3. MOM: Momentum (MOM) values.
-            4. ROC: Rate of change (ROC) values. 
+            4. ROC: Rate of change (ROC) values.
             5. ROCR: Rate of change ratio (ROCR) values.
             6. AROON: Aroon (AROON) values.
             7. AROONOSC: Aroon oscillator (AROONOSC) values.
@@ -591,7 +579,7 @@ class AdvantageStockGrepper:
             time_period = time_period,
             series_type = series_type,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -620,10 +608,10 @@ class AdvantageStockGrepper:
         :param function: The function to retrieve different oscillator indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
             1. APO: Absolute price oscillator (APO) values.
             2. PPO: Percentage price oscillator (PPO) values.
-            3. CCI: Commodity channel index (CCI) values. 
+            3. CCI: Commodity channel index (CCI) values.
             4. MFI: Money flow index (MFI) values.
             5. STOCH: Stochastic oscillator (STOCH) values.
-            6. STOCHF: Stochastic fast (STOCHF) values. 
+            6. STOCHF: Stochastic fast (STOCHF) values.
         :param symbol: The name of the token of your choice.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
@@ -669,7 +657,7 @@ class AdvantageStockGrepper:
             slowkmatype = slowkmatype,
             slowdmatype = slowdmatype,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -710,7 +698,7 @@ class AdvantageStockGrepper:
             fastperiod = fastperiod,
             slowperiod = slowperiod,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -728,7 +716,7 @@ class AdvantageStockGrepper:
         This method returns volatility indicators of prices.
 
         :param function: The function to retrieve different volatility indicators. [Formula](https://github.com/carlonlv/ProjectBuffalo/wiki/Metrics)
-            1. ATR: Average true range (ATR) values. 
+            1. ATR: Average true range (ATR) values.
             2. NATR: Normalized Average True Range (NATR) values.
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
@@ -741,7 +729,7 @@ class AdvantageStockGrepper:
             interval = interval,
             time_period = time_period,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:
@@ -799,7 +787,7 @@ class AdvantageStockGrepper:
             timeperiod2 = timeperiod2,
             timeperiod3 = timeperiod3,
             datatype = 'csv',
-            apikey = self.api_key)
+            apikey = self._api_key)
 
         result = pd.read_csv(url)
         if len(result.index) == 0:

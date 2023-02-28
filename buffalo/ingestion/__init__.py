@@ -6,7 +6,7 @@ import sqlite3
 from typing import List, Optional, Union
 
 import pandas as pd
-from buffalo.utility import concat_list, create_parent_directory
+from ..utility import concat_list, create_parent_directory
 
 from . import advantage, enum
 from .configuration import Configuration
@@ -20,7 +20,7 @@ class DataIngestion:
         """
         Initializer for DataIngestion class
 
-        :param end_points: The endpoints to be used, functions are used 
+        :param end_points: The endpoints to be used, functions a
         """
         self.data = pd.DataFrame()
         if end_points is None:

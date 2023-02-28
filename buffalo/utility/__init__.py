@@ -5,12 +5,32 @@ Common helper functions that can be useful to all modules.
 import inspect
 import os
 import warnings
+from typing import Any, Callable, Dict, List, NewType
 
 import numpy as np
 import pandas as pd
 
+PositiveInt = NewType('PositiveInt', int)
+PositiveFlt = NewType('PositiveFloat', float)
 
-def do_call(func, *args, **kwargs):
+class PositiveInteger(int):
+    """ Custom data type of positive integer to enforce type checking.
+    """
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("PositiveInteger cannot be negative")
+        return super().__new__(cls, value)
+
+class PositiveFloat(float):
+    """ Custom data type of positive float to enforce type checking.
+    """
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("PositiveFloat cannot be negative")
+        return super().__new__(cls, value)
+
+
+def do_call(func: Callable, *args, **kwargs):
     """
     Call function, ignore nonexited arguments
 
@@ -23,7 +43,7 @@ def do_call(func, *args, **kwargs):
     filtered_dict = {filter_item[0] : filter_item[1] for filter_item in kwargs.items() if filter_item[0] in sig.parameters.keys()}
     return func(*args, **filtered_dict)
 
-def concat_list(lst, sep=","):
+def concat_list(lst: List[Any], sep=","):
     """
     Concat all elements in a given list.
 
@@ -33,7 +53,7 @@ def concat_list(lst, sep=","):
     """
     return sep.join(map(str, lst))
 
-def concat_dict(dct, kv_sep=":", sep=","):
+def concat_dict(dct: Dict[Any,Any], kv_sep: str=":", sep: str=","):
     """
     Concat all items in a given dictionary.
 
@@ -47,7 +67,7 @@ def concat_dict(dct, kv_sep=":", sep=","):
         items.append(f'{key}{kv_sep}{value}')
     return sep.join(items)
 
-def create_parent_directory(filepath):
+def create_parent_directory(filepath: str) -> None:
     """
     Create parent directories following the filepath.
     :param filepath: Filepath.
@@ -56,7 +76,7 @@ def create_parent_directory(filepath):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-def expand_grid(**kwargs):
+def expand_grid(**kwargs) -> pd.DataFrame:
     """
     Create an cross join product from given arguments.
     :param **kwargs: Arguments to create columns.
@@ -69,7 +89,7 @@ def expand_grid(**kwargs):
         coln: arr.flatten() for coln, arr in zip(columns, np.meshgrid(*xii))
     })
 
-def find_nearest_in_list(item, lst, round_up=False, round_down=False):
+def find_nearest_in_list(item: Any, lst: List[Any], round_up: bool=False, round_down: bool=False):
     """
     Find the closet approximation of item from a list. If round_up and
     round_down are both false, minimum absolute values are used.
