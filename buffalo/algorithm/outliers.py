@@ -2,10 +2,10 @@
 This module contains algorithms for identifying/removing/predicting outliers.
 """
 
-from typing import Optional, List, Literal, Dict, Any
+from typing import Any, Dict, List, Literal, Optional
 
 import pandas as pd
-from statsmodels.tsa.arima_model import ARIMA
+from pmdarima import AutoARIMA, ARIMA
 
 from ..utility import PositiveFlt, PositiveInt
 
@@ -30,9 +30,8 @@ class IterativeTtestOutlierDetection:
         cval_reduce: PositiveFlt=0.14286,
         discard_method: Literal['en-masse', 'bottom-up']='en_masse',
         discard_cval: Optional[PositiveFlt]=None,
-        tsmethod: Literal["auto.arima", "arima"]='auto.arima',
+        tsmethod: Literal["AutoARIMA", "ARIMA"]='auto.arima',
         args_tsmethod: Optional[Dict[str, Any]]=None,
-        logfile: Optional[str]=None,
         check_rank: bool=True) -> None:
         """
         Initializer and configuration for IterativeTtestOutlierDetection.
@@ -72,8 +71,57 @@ class IterativeTtestOutlierDetection:
         self.maxit_oloop = maxit_oloop
         self.cval_reduce = cval_reduce
         self.discard_method = discard_method
+        if discard_cval is None:
+            discard_cval = self.cval
         self.discard_cval = discard_cval
         self.tsmethod = tsmethod
+        if args_tsmethod is None:
+            args_tsmethod = {}
+            if tsmethod == 'AutoARIMA':
+                if exog is not None:
+                    args_tsmethod['information_criterion'] = 'bic'
+            else:
+                if exog is not None:
+                    args_tsmethod['order'] = (0, 1, 1)
+
         self.args_tsmethod = args_tsmethod
-        self.logfile = logfile
         self.check_rank = check_rank
+
+    def _locate_outlier_oloop(self):
+        """
+        y, fit, types = c("AO", "LS", "TC"), cval = NULL, 
+  maxit.iloop = 4, maxit.oloop = 4, delta = 0.7, logfile = NULL
+
+        :param y:
+        :param fit:
+        :param types:
+        :param cval
+        """
+        moall = pd.DataFrame(columns=['type', 'ind', 'coefhat', 'tstat'])
+        tmp = self.ts_model.order[2] + self.ts_model.seasonal_order[3] * self.ts_model.seasonal_order[1]
+        if tmp > 1:
+            id0resid = list(range(1, tmp+1))
+        else:
+            id0resid = [1, 2]
+
+        iter = 0
+        while iter < self.maxit_oloop:
+            
+        
+    def _fit(self):
+        """
+        """
+        if self.tsmethod == 'AutoARIMA':
+            self.ts_model = AutoARIMA(**self.args_tsmethod).fit(y=self.endog, X=self.exog)._model
+        else:
+            self.ts_model = ARIMA(**self.args_tsmethod).fit(y=self.endog, X=self.exog)
+
+        return
+
+    def fit(self):
+        """
+        """
+        cval0 = self.cval
+        res0 = res = self._fit()
+        
+        return
