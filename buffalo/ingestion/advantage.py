@@ -4,7 +4,7 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import Callable, Dict, Literal, NewType, Optional, Tuple
+from typing import Callable, Dict, Literal, Optional, Tuple
 
 import pandas as pd
 import requests

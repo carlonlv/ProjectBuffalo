@@ -1,8 +1,6 @@
 """
 This module contains algorithms for identifying/removing/predicting outliers.
 """
-
-import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -133,7 +131,7 @@ class IterativeTtestOutlierDetection:
 
         self.fitted_trend = fitted_trend
         return fitted_trend
-    
+
     def _sarima_params_to_poly_coeffs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """ 
         Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters.
@@ -228,13 +226,7 @@ class IterativeTtestOutlierDetection:
 
     def _locate_outlier_oloop(self):
         """
-        y, fit, types = c("AO", "LS", "TC"), cval = NULL, 
-  maxit.iloop = 4, maxit.oloop = 4, delta = 0.7, logfile = NULL
-
-        :param y:
-        :param fit:
-        :param types:
-        :param cval
+        Outer loop for identifying Locate Outliers.
         """
         moall = pd.DataFrame(columns=['type', 'ind', 'coefhat', 'tstat'])
         tmp = self.ts_model.order[2] + self.ts_model.seasonal_order[3] * self.ts_model.seasonal_order[1]
@@ -251,8 +243,7 @@ class IterativeTtestOutlierDetection:
             mo = self._locate_outlier_iloop()
             if len(mo.index) == 0:
                 break
-            
-            
+
             its += 1
 
     def _fit(self):
