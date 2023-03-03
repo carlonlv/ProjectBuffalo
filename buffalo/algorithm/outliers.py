@@ -2,11 +2,14 @@
 This module contains algorithms for identifying/removing/predicting outliers.
 """
 
-from typing import Any, Dict, List, Literal, Optional
+import warnings
+from functools import reduce
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-import pandas as pd
 import numpy as np
-from pmdarima import AutoARIMA, ARIMA
+import pandas as pd
+from pmdarima import ARIMA, AutoARIMA
+from scipy import signal
 
 from ..utility import PositiveFlt, PositiveInt
 
@@ -88,108 +91,140 @@ class IterativeTtestOutlierDetection:
         self.args_tsmethod = args_tsmethod
         self.check_rank = check_rank
 
-    @staticmethod
-    def _coef2poly(model: ARIMA, add: bool=True):
-        """ Convert coefficients of ARIMA model to polynomials. This function collapses the polynomials of an ARIMA model into two polynomials: the product of the autoregressive polynomials and the product of the moving average polynomials.
+        ## Propogated later through other functions
+        self.ts_model = None
+        self.fitted_trend = None
+        self.poly_coeffs = None
 
-        :param model: an object of class ARIMA.
-        :param add: If TRUE, the polynomial of the differencing filter (if present in the model) is multiplied by the stationary autoregressive polynomial. Otherwise only the coefficients of the product of the stationary polynomials is returned.
-        :return: A dictionary containing the elements: arcoefs, the coefficients of the product of the autoregressive polynomials; macoefs, the coefficients of the product of the moving average polynomials.
+    def _find_poly_time_trend(self) -> np.ndarray:
+        """ 
+        Find fitted polynomial time trend.
+
+        :return: Fitted polynomial time trend which is equal in size of input endogenous time series.
         """
-        arcoefs = model.arparams()
-        if add and model.order[1]> 0:
-            arcoefs = np.insert(-arcoefs, 0, 1)
-            for _ in range(model.order[1]):
-                arcoefs = np.concatenate((np.array([arcoefs[0]]), np.diff(arcoefs), np.array([-arcoefs[-1]])))
-            arcoefs = -arcoefs[1:]
-        
-        if add and model.seasonal_order[1] > 0:
-            arcoefs = np.insert(-arcoefs, 0, 1)
-            tmp = np.concatenate(np.zeros(model.seasonal_order[3] - 1), arcoefs, np.zeros(model.seasonal_order[3] - 1))
-            tmp = tmp[model.seasonal_order[3]:] - tmp[:model.seasonal_order[3]]
-            arcoefs = np.concatenate((np.array([arcoefs[0]]), tmp, np.array([-arcoefs[-1]])))
-            if model.seasonal_order[1] == 2:
-                tmp = np.concatenate(np.zeros(model.seasonal_order[3] - 1), arcoefs, np.zeros(model.seasonal_order[3] - 1))
-                tmp = tmp[model.seasonal_order[3]:] - tmp[:model.seasonal_order[3]]
-                arcoefs = np.concatenate((np.array([arcoefs[0]]), tmp, np.array([-arcoefs[-1]])))
-            elif model.seasonal_order[1] > 2:
-                raise Exception(f'Unsupported model seasonal difference D {model.seasonal_order[1]} > 2.')
-            arcoefs = -arcoefs[1:]
-        
-        macoefs = model.maparams()
-        macoefs = macoefs[np.arange(model.order[2] + model.seasonal_order[2] * model.seasonal_order[3])]
+        if self.fitted_trend is not None:
+            return self.fitted_trend
 
-        return {
-            'arcoefs': arcoefs,
-            'macoefs': macoefs
-        }
+        params = self.ts_model.params()
+        trend_offset = 1
+        if 'trend_offset' in self.args_tsmethod:
+            trend_offset = self.args_tsmethod['trend_offset']
+        nobs = self.ts_model.arima_res_.nobs
 
-    @staticmethod
-    def arima2poly(model: ARIMA, ar, ma, seasonal_ar=None, seasonal_ma=None, s=1):
-        """
-        Convert ARIMA model coefficients to polynomial form.
+        time_obs = np.arange(start=trend_offset, stop=trend_offset+nobs)
 
-        Parameters:
-        -----------
-        ar : array_like
-            Autoregressive coefficients.
-        ma : array_like
-            Moving average coefficients.
-        seasonal_ar : array_like, optional
-            Seasonal autoregressive coefficients. Default is None.
-        seasonal_ma : array_like, optional
-            Seasonal moving average coefficients. Default is None.
-        s : int, optional
-            Seasonal period. Default is 1.
-
-        Returns:
-        --------
-        poly : ndarray
-            Coefficients of the polynomial in increasing order of degree.
-        """
-        ar = model.arparams()
-        ma = model.maparams()
-
-        order_p = model.order[0]
-        order_d = model.order[1]
-        order_q = model.order[2]
-
-        seasonal_order_P = model.seasonal_order[0]
-        seasonal_order_D = model.seasonal_order[1]
-        seasonal_order_Q = model.seasonal_order[2]
-        seasonal_order_s = model.seasonal_order[3]
-
-        if order_d > 0:
-            # Create coefficients of the differencing polynomial
-            pd = np.concatenate(([1], np.zeros(order_d - 1), [-1]))
-
-            # Calculate polynomial representation of differenced ARIMA process
-            ar = np.polymul(ar, pd)
-            ma = np.polymul(ma, pd)
-
-        # If there is a seasonal component, include it
-        if seasonal_order_P > 0 or seasonal_order_Q > 0:
-            poly = np.zeros(max(order_p, order_q, seasonal_order_P * seasonal_order_s, seasonal_order_Q * seasonal_order_s) + 1)
+        other_poly = params[params.index.str.match(r'trend\.\d+')]
+        if 'intercept' in params.index:
+            other_poly['trend.0'] = params['intercept']
         else:
-            poly = np.zeros(max(order_p, order_q) + 1)
+            other_poly['trend.0'] = 0
+        if 'drift' in params.index:
+            other_poly['trend.1'] = params['drift']
+        else:
+            other_poly['trend.1'] = 0
+        other_poly.index = other_poly.index.str.replace(r'trend\.', '').astype(int)
 
-        # Set the coefficients corresponding to the AR and MA terms
-        poly[0] = 1
-        poly[1:(order_p+1)] = -ar
-        poly[1:(order_q+1)] += ma
+        max_other_poly = other_poly.max()
 
-        # If there is a seasonal component, set the corresponding coefficients
-        if seasonal_order_P > 0:
-            for i in range(seasonal_order_s, seasonal_order_P * seasonal_order_s + 1, seasonal_order_s):
-                poly[i+1:i+q+1] += seasonal_ar[:q]
-                seasonal_ar = seasonal_ar[q:]
-        if seasonal_order_Q > 0:
-            for i in range(s, seasonal_order_Q * s + 1, s):
-                poly[i+1:i+p+1] -= seasonal_ma[:p]
-                seasonal_ma = seasonal_ma[p:]
+        fitted_trend = np.zeros(time_obs.shape)
+        for i in range(max_other_poly):
+            if i in other_poly.index:
+                fitted_trend += other_poly[i] * np.power(time_obs, i)
 
-        return poly
+        self.fitted_trend = fitted_trend
+        return fitted_trend
+    
+    def _sarima_params_to_poly_coeffs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """ 
+        Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters.
 
+        :return: Converted polynomials for AR polynomial, MA polynomial, sAR polynomial, sMA polynomial.
+        """
+        if self.poly_coeffs is not None:
+            return self.poly_coeffs['ar_params'], self.poly_coeffs['diff_params'], self.poly_coeffs['ma_params'], self.poly_coeffs['ar_seasonal_params'], self.poly_coeffs['diff_seasonal_params'], self.poly_coeffs['ma_seasonal_params']
+
+        def fill_poly_with_zero(params):
+            for i in range(params.index.max()):
+                if i not in params:
+                    params[i] = 0
+
+        params = self.ts_model.params()
+
+        difference_d = self.ts_model.order[1]
+        difference_seasonal_d = self.ts_model.seasonal_order[1]
+        seasonal_s = max(self.ts_model.seasonal_order[3], 1)
+
+        ar_params = params[params.index.str.match(r'ar\.L\d+')]
+        ar_params *= -1
+        ar_params.index = ar_params.index.str.replace(r'ar\.L', '').astype(int)
+        ar_params[0] = 1
+        ar_params = ar_params.sort_index(ascending=False) ## Decreasing order in polynomial
+        fill_poly_with_zero(ar_params)
+
+        ar_seasonal_params = params[params.index.str.match(r'ar\.S\.L\d+')]
+        ar_seasonal_params *= -1
+        ar_seasonal_params.index = ar_seasonal_params.index.str.replace(r'ar\.S\.L', '').astype(int)
+        ar_seasonal_params[0] = 1
+        ar_seasonal_params.index *= seasonal_s
+        ar_seasonal_params = ar_seasonal_params.sort_index(ascending=False)
+        fill_poly_with_zero(ar_seasonal_params)
+
+        diff_params = reduce(np.polymul, [np.array([-1, 1])] * difference_d, np.array([1]))
+
+        ma_params = params[params.index.str.match(r'ma\.L\d+')]
+        ma_params.index = ma_params.index.str.replace(r'ma\.L', '').astype(int)
+        ma_params[0] = 1
+        ma_params = ma_params.sort_index(ascending=False) ## Decreasing order in polynomial
+        fill_poly_with_zero(ma_params)
+
+        ma_seasonal_params = params[params.index.str.match(r'ma\.S\.L\d+')]
+        ma_seasonal_params.index = ma_seasonal_params.index.str.replace(r'ma\.S\.L', '').astype(int)
+        ma_seasonal_params[0] = 1
+        ma_seasonal_params.index *= seasonal_s
+        ma_seasonal_params = ma_seasonal_params.sort_index(ascending=False)
+        fill_poly_with_zero(ma_seasonal_params)
+
+        diff_seasonal_params = reduce(np.polymul, [np.concatenate((np.array([-1]), np.zeros(seasonal_s-1), np.array([1])))] * difference_seasonal_d, np.array([1]))
+
+        self.poly_coeffs = {
+            'ar_params': ar_params,
+            'diff_params': diff_params,
+            'ma_params': ma_params,
+            'ar_seasonal_params': ar_seasonal_params,
+            'diff_seasonal_params': diff_seasonal_params,
+            'ma_seasonal_params': ma_seasonal_params
+        }
+        return ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params
+
+    def _trend_to_intercept(self) -> np.ndarray:
+        """
+        Convert fitted trend to infinite MA representation.
+        """
+        ar_params, _, diff_params, ar_seasonal_params, diff_seasonal_params, _ = self._sarima_params_to_poly_coeffs()
+
+        left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
+
+        time_trend = self._find_poly_time_trend()
+        return time_trend / left_params.sum()
+
+    def _params_to_ma(self, leads=100):
+        """
+        Convert fitted parameters to infinite MA representation.
+
+        :param leads: Truncate this number of polynomials to represent infinite ma representations.
+        """
+        ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = self._sarima_params_to_poly_coeffs()
+
+        left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
+
+        right_params = reduce(np.polymul, [ma_params, ma_seasonal_params])
+
+        impluse = np.zeros(leads)
+        impluse[0] = 1
+        return signal.lfilter(right_params, left_params, impluse)
+
+    def _locate_outlier_iloop(self):
+        return pd.DataFrame()
 
     def _locate_outlier_oloop(self):
         """
@@ -204,14 +239,22 @@ class IterativeTtestOutlierDetection:
         moall = pd.DataFrame(columns=['type', 'ind', 'coefhat', 'tstat'])
         tmp = self.ts_model.order[2] + self.ts_model.seasonal_order[3] * self.ts_model.seasonal_order[1]
         if tmp > 1:
-            id0resid = list(range(1, tmp+1))
+            id0resid = list(range(0, tmp))
         else:
-            id0resid = [1, 2]
+            id0resid = [0, 1]
 
-        iter = 0
-        while iter < self.maxit_oloop:
+        its = 0
+        while its < self.maxit_oloop:
+            res = self.ts_model.resid()
+            if (res[id0resid] > 3.5 * np.std(np.delete(res, id0resid))).any():
+                res[id0resid] = 0
+            mo = self._locate_outlier_iloop()
+            if len(mo.index) == 0:
+                break
             
-        
+            
+            its += 1
+
     def _fit(self):
         """
         """
@@ -220,49 +263,10 @@ class IterativeTtestOutlierDetection:
         else:
             self.ts_model = ARIMA(**self.args_tsmethod).fit(y=self.endog, X=self.exog)
 
-        return
-
     def fit(self):
         """
         """
         cval0 = self.cval
-        res0 = res = self._fit()
-        
+        self._fit()
+
         return
-
-import numpy as np
-
-def arima2poly(ar, ma, d, D, seasonal_ar=None, seasonal_ma=None, period=1, include_constant=True):
-    """
-    Convert ARIMA model coefficients to polynomial form.
-    """
-    p, d, q = len(ar), d, len(ma)
-    if seasonal_ar is not None:
-        P, D, Q, s = len(seasonal_ar), D, len(seasonal_ma), period
-    else:
-        P, D, Q, s = 0, 0, 0, 1
-    poly_ar = np.r_[1, -ar]
-    poly_ma = np.r_[1, ma]
-    poly_seasonal_ar = np.r_[1]
-    if seasonal_ar is not None:
-        poly_seasonal_ar = np.r_[1, -seasonal_ar]
-    poly_seasonal_ma = np.r_[1]
-    if seasonal_ma is not None:
-        poly_seasonal_ma = np.r_[1, seasonal_ma]
-    poly = 1
-    for k in range(D):
-        poly = np.polymul(poly, np.r_[1, np.zeros(s-1), 1])
-    poly = np.polymul(poly, poly_seasonal_ar)
-    for k in range(d):
-        poly = np.polymul(poly, np.r_[1, -1])
-    poly = np.polymul(poly, poly_ar)
-    print(poly)
-    for k in range(q):
-        poly = np.polymul(poly, np.r_[1, 0])
-    poly = np.polymul(poly, poly_ma)
-    for k in range(Q):
-        poly = np.polymul(poly, np.r_[1, np.zeros(s-1), 1])
-    poly = np.polymul(poly, poly_seasonal_ma)
-    if include_constant:
-        poly = np.polymul(poly, np.r_[1, np.zeros(s-1)]) + 1
-    return poly
