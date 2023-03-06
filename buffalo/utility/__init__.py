@@ -10,23 +10,42 @@ from typing import Any, Callable, Dict, List, NewType
 import numpy as np
 import pandas as pd
 
-PositiveInt = NewType('PositiveInt', int)
+NonnegativeInt = NewType('NonnegativeInteger', int)
+NonnegativeFlt = NewType('NonnegativeFloat', float)
+
+PositiveInt = NewType('PositiveInteger', int)
 PositiveFlt = NewType('PositiveFloat', float)
+
+class NonnegativeInteger(int):
+    """ Custom data type of nonnegative integer to enforce type checking.
+    """
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("NonnegativeInteger cannot be negative.")
+        return super().__new__(cls, value)
+
+class NonnegativeFloat(float):
+    """ Custom data type of nonnegative float to enforce type checking.
+    """
+    def __new__(cls, value):
+        if value < 0:
+            raise ValueError("NonnegativeFloat cannot be negative.")
+        return super().__new__(cls, value)
 
 class PositiveInteger(int):
     """ Custom data type of positive integer to enforce type checking.
     """
     def __new__(cls, value):
-        if value < 0:
-            raise ValueError("PositiveInteger cannot be negative")
+        if value <= 0:
+            raise ValueError("PositiveInteger cannot be negative or zero.")
         return super().__new__(cls, value)
 
 class PositiveFloat(float):
     """ Custom data type of positive float to enforce type checking.
     """
     def __new__(cls, value):
-        if value < 0:
-            raise ValueError("PositiveFloat cannot be negative")
+        if value <= 0:
+            raise ValueError("PositiveFloat cannot be negative or zero.")
         return super().__new__(cls, value)
 
 

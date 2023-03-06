@@ -1,6 +1,7 @@
 """
 This module contains algorithms for identifying/removing/predicting outliers.
 """
+import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
@@ -9,17 +10,27 @@ import pandas as pd
 from pmdarima import ARIMA, AutoARIMA
 from scipy import signal
 
-from ..utility import PositiveFlt, PositiveInt, expand_grid
+from ..utility import PositiveFlt, PositiveInt, NonnegativeInt
 
 
-def find_poly_time_trend(ts_model: ARIMA, trend_offset: PositiveFlt, nobs: PositiveFlt):
+def get_params(ts_model: ARIMA) -> pd.DataFrame:
+    """
+    Get parameter of fitted ts_model.
+
+    :param ts_model: The fitted ARIMA model.
+    :return: Reformatted table of fitted parameters and the standard deviation.
+    """
+    return pd.DataFrame(ts_model.arima_res_.summary().tables[1].data[1:], columns=ts_model.arima_res_.summary().tables[1].data[0])
+
+def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt):
     """ 
     Find fitted polynomial time trend.
     
+    :param params: The parameter from time series model.
+    :param resid: Residual time series.
     :return: Fitted polynomial time trend which is equal in size of input endogenous time series.
     """
-    params = ts_model.params()
-    time_obs = np.arange(start=trend_offset, stop=trend_offset+nobs)
+    time_obs = np.arange(start=trend_offset, stop=trend_offset+len(resid))
 
     other_poly = params[params.index.str.match(r'trend\.\d+')]
     if 'intercept' in params.index:
@@ -41,10 +52,15 @@ def find_poly_time_trend(ts_model: ARIMA, trend_offset: PositiveFlt, nobs: Posit
 
     return fitted_trend
 
-def sarima_params_to_poly_coeffs(ts_model: ARIMA) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+def sarima_params_to_poly_coeffs(params: pd.Series,
+                                 order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+                                 seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt)) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
     """ 
-    Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters.
+    Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters, in decreasing polynomial orders.
 
+    :param params: The parameter from time series model.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
     :return: Converted polynomials for AR polynomial, MA polynomial, sAR polynomial, sMA polynomial.
     """
     def fill_poly_with_zero(params):
@@ -52,11 +68,9 @@ def sarima_params_to_poly_coeffs(ts_model: ARIMA) -> Tuple[pd.Series, pd.Series,
             if i not in params:
                 params[i] = 0
 
-    params = ts_model.params()
-
-    difference_d = ts_model.order[1]
-    difference_seasonal_d = ts_model.seasonal_order[1]
-    seasonal_s = max(ts_model.seasonal_order[3], 1)
+    difference_d = order[1]
+    difference_seasonal_d = seasonal_order[1]
+    seasonal_s = max(seasonal_order[3], 1)
 
     ar_params = params[params.index.str.match(r'ar\.L\d+')]
     ar_params *= -1
@@ -74,6 +88,7 @@ def sarima_params_to_poly_coeffs(ts_model: ARIMA) -> Tuple[pd.Series, pd.Series,
     fill_poly_with_zero(ar_seasonal_params)
 
     diff_params = reduce(np.polymul, [np.array([-1, 1])] * difference_d, np.array([1]))
+    diff_params = pd.Series(diff_params, index=np.flip(np.arange(len(diff_params))))
 
     ma_params = params[params.index.str.match(r'ma\.L\d+')]
     ma_params.index = ma_params.index.str.replace(r'ma\.L', '').astype(int)
@@ -89,30 +104,54 @@ def sarima_params_to_poly_coeffs(ts_model: ARIMA) -> Tuple[pd.Series, pd.Series,
     fill_poly_with_zero(ma_seasonal_params)
 
     diff_seasonal_params = reduce(np.polymul, [np.concatenate((np.array([-1]), np.zeros(seasonal_s-1), np.array([1])))] * difference_seasonal_d, np.array([1]))
+    diff_seasonal_params = pd.Series(diff_seasonal_params, index=np.flip(np.arange(len(diff_seasonal_params))))
 
     return ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params
 
-def find_intercept(ts_model: ARIMA, trend_offset: PositiveFlt, nobs: PositiveFlt) -> np.ndarray:
+def find_intercept(
+        params: pd.Series,
+        resid: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        trend_offset: PositiveInt) -> np.ndarray:
     """
     Convert fitted trend to infinite MA representation. Can remove this value from original time series, the residuals is fitted by SARIMAX model.
+
+    :param params: The parameter from time series model.
+    :param resid: Residual time series.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
+    :return: The fitted intercept with equal length to response.
     """
-    ar_params, _, diff_params, ar_seasonal_params, diff_seasonal_params, _ = sarima_params_to_poly_coeffs(ts_model)
+    ar_params, _, diff_params, ar_seasonal_params, diff_seasonal_params, _ = sarima_params_to_poly_coeffs(params, order, seasonal_order)
 
     left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
 
-    time_trend = find_poly_time_trend(ts_model, trend_offset, nobs)
+    time_trend = find_poly_time_trend(params, resid, trend_offset)
     return time_trend / left_params.sum()
 
-def params_to_infinite_representations(ts_model: ARIMA, leads: PositiveInt=100, right_on_left: bool=True) -> np.ndarray:
+def params_to_infinite_representations(
+        ar_params: pd.Series,
+        diff_params: pd.Series,
+        ma_params: pd.Series,
+        ar_seasonal_params: pd.Series,
+        diff_seasonal_params: pd.Series,
+        ma_seasonal_params: pd.Series,
+        leads: PositiveInt=100,
+        right_on_left: bool=True) -> np.ndarray:
     """
     Convert fitted parameters to infinite MA representation.
 
-    :param ts_model:
+    :param ar_params: Output from sarima_params_to_poly_coeffs.
+    :param diff_params: Output from sarima_params_to_poly_coeffs.
+    :param ma_params: Output from sarima_params_to_poly_coeffs.
+    :param ar_params: Output from sarima_params_to_poly_coeffs.
+    :param ar_seasonal_params: Output from sarima_params_to_poly_coeffs.
+    :param diff_seasonal_params: Output from sarima_params_to_poly_coeffs.
+    :param ma_seasonal_params: Output from sarima_params_to_poly_coeffs.
     :param leads: Truncate this number of polynomials to represent infinite ma representations.
     :return: Infinite MA(right_on_left) or AR(left_on_right) series in increasing polynomials.
     """
-    ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(ts_model)
-
     left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
     left_params = np.flip(left_params) ## Convert to increasing polynomials
 
@@ -126,101 +165,524 @@ def params_to_infinite_representations(ts_model: ARIMA, leads: PositiveInt=100, 
     else:
         return signal.lfilter(left_params, right_params, impulse)
 
-def outliers_tstats(ts_model: ARIMA, types: List[Literal['AO', 'LS', 'TC']]=["AO", "LS", "TC"], sigma: Optional[PositiveFlt]=None, delta: PositiveInt=0.7):
+def recursive_filter(signal_x: np.ndarray, filter_param: np.ndarray, init=None):
+    """
+    Autoregressive, or recursive, filtering.
+
+    :param signal_x: time series data.
+    :param filter_param: AR coefficients in increasing time order.
+    :param init : Initial values of the time series prior to the first value of y. The default is zero.
+    :return: Filtered array, number of columns determined by x and filter. If x is a pandas object than a Series is returned.
+    """
+    if init is not None:  # integer init are treated differently in lfiltic
+        assert init.shape == filter_param.shape, 'filter_param must be the same length as init.'
+
+    if init is not None:
+        signal_zi = signal.lfiltic([1], np.r_[1, -filter_param], init, signal_x)
+    else:
+        signal_zi = None
+
+    signal_y = signal.lfilter([1.], np.r_[1, -filter_param], signal_x, zi=signal_zi)
+
+    if init is not None:
+        result = signal_y[0]
+    else:
+        result = signal_y
+
+    return result
+
+def diffinv(signal_x: np.ndarray, lag: PositiveInt=1, init: Optional[PositiveInt]=None):
+    """
+    Discrete Integration: Inverse of Differencing
+    :param signal_x: A numeric 1d array.
+    :param lag:	A scalar lag parameter.
+    :param differences: An integer representing the order of the difference.
+    :param init: A numeric vector, matrix, or time series containing the initial values for the integrals. If missing, zeros are used.
+    :return: A numeric vector representing the discrete integral of x.
+    """
+    assert len(signal_x.shape) == 1, "x must be 1d array."
+    if init is None:
+        init = np.zeros(lag)
+    assert init.shape == (lag,), 'init must be 1d array of length lag.'
+
+    signal_x = np.concatenate((init, signal_x))
+
+    all_arrays = []
+    for i in range(lag):
+        temp = np.full(len(signal_x) // lag + 1, np.nan)
+        temp2 = np.cumsum(signal_x[i::lag])
+        temp[:len(temp2)] = temp2
+        all_arrays.append(temp)
+
+    result = np.stack(all_arrays).transpose().flatten()
+    result = result[~np.isnan(result)]
+    return result
+
+def outliers_tstats(
+        params: pd.Series,
+        resid: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        types: pd.DataFrame,
+        sigma: PositiveFlt,
+        trend_offset: PositiveInt=1) -> pd.DataFrame:
     """
     Compute t-statistics for the significance of outliers.
+
+    :param params: The parameter from time series model.
+    :param resid: Residual time series.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
+    :param types: A dictionary containing all outliers to be detected. The keys correspond to one of IO, AO, TC, STC, VC. TC take parameter delta > 0 and delta <= 1. If delta is not provided, 0.7 will be used. STC also takes parameter delta, 1 will be used as default. VC takes parameter min_n as the minimum number of observations used to detect VC. If min_n is not provided, minimum of 20 observations will be used.
+    :param sigma: Standard deviation of residuals.
+    :return: A dataframe containing the residuals and their estimated coefficient factor for each type and t-statistics.
     """
-    res = ts_model.resid()
-    pi_coefs = params_to_infinite_representations(ts_model, leads=len(res), right_on_left=False)
-    ao_xy = signal.convolve(np.concatenate((res, np.zeros(len(res)-1))), np.flip(pi_coefs))[(len(res)-1):(1-len(res))]
+    seasonal_s = max(seasonal_order[3], 1)
+    ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(params, order, seasonal_order)
+    pi_coefs = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+    ao_xy = signal.convolve(np.concatenate((resid, np.zeros(len(resid)-1))), np.flip(pi_coefs))[(len(resid)-1):(1-len(resid))]
     rev_ao_xy = np.flip(ao_xy)
 
-    result = expand_grid(residuals = res, type = types)
+    result = pd.DataFrame({'residuals': resid, 't_index': np.arange(start=trend_offset, stop=trend_offset+len(resid))})
+    result = pd.merge(result, types, how='cross')
     result['coefhat'] = np.nan
     result['tstat'] = np.nan
-    for _ in types:
-        if _ == 'AO':
+    for idx in types.index:
+        if types.loc[idx,'type'] == 'AO':
             xxinv = np.flip(1 / np.cumsum(np.power(pi_coefs, 2)))
             coef_hat = ao_xy * xxinv
             result.loc[result['type'] == 'AO','coefhat'] = coef_hat
             result.loc[result['type'] == 'AO','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
-        elif _ == 'TC':
-            pass
-        elif _ == 'LS':
-            pass
+        elif types.loc[idx,'type'] == 'TC':
+            delta = types.loc[idx,'delta']
+            x_y = np.flip(recursive_filter(rev_ao_xy, np.array([delta])))
+            dinvf = recursive_filter(pi_coefs, np.array([delta]))
+            xxinv = np.flip(1 / np.cumsum(np.power(dinvf, 2)))
+            coef_hat = x_y * xxinv
+            result.loc[result['type'] == 'AO','coefhat'] = coef_hat
+            result.loc[result['type'] == 'AO','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+        elif types.loc[idx,'type'] == 'STC':
+            delta = types.loc[idx,'delta']
+            rm_id = np.arange(seasonal_s)
+            x_y = np.flip(np.delete(diffinv(rev_ao_xy, lag=seasonal_s), rm_id))
+            dinvf = np.delete(diffinv(pi_coefs, lag=seasonal_s), rm_id)
+            xxinv = np.flip(1 / np.cumsum(np.power(dinvf, 2)))
+            coef_hat = x_y * xxinv
+            result.loc[result['type'] == 'STC','coefhat'] = coef_hat
+            result.loc[result['type'] == 'STC','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+        elif types.loc[idx,'type'] == 'VC':
+            min_n = types.loc[idx,'min_n']
+            bt_sqrd = [(np.sum(np.power(resid[:(i-1)], 2)), np.sum(np.power(resid[i:], 2))) for i in range(min_n+1, len(resid)-min_n)]
+            r_d = np.array([(bt_sqrd[i][1] * (i-1)) / (bt_sqrd[i][1] * (len(resid)-i+1)) for i in range(len(bt_sqrd))])
+            coef_hat = np.zeros(len(resid))
+            coef_hat[(min_n+1):(len(resid)-min_n)] = np.sqrt(r_d) - 1
+            result.loc[result['type'] == 'STC','coefhat'] = coef_hat
+            result.loc[result['type'] == 'STC','tstat'] = r_d.max() / r_d.min()
         else:
-            result.loc[result['type'] == 'IO','coefhat'] = res
-            result.loc[result['type'] == 'AO','tstat'] = res / sigma
-    return
+            result.loc[result['type'] == 'IO','coefhat'] = resid
+            result.loc[result['type'] == 'IO','tstat'] = resid / sigma
+    return result
 
-def compute_tstats(params: pd.Series, resid: np.ndarray, types: List[Literal['AO', 'LS', 'TC']], sigma: PositiveFlt, delta: PositiveFlt):
-    """
-    This function applies the t-statistics for the significance of outliers at every time point and selects those that are significant given a critical value.
-
-    
-    """
-    
-    return
-
-def locate_outliers(resid: np.ndarray, params: pd.Series, cval: PositiveFlt=3.5, types: List[Literal['AO', 'LS', 'TC']]=['AO', 'LS', 'TC'], delta: PositiveFlt=0.7):
+def locate_outliers(
+        params: pd.Series,
+        resid: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        cval: PositiveFlt=3.5,
+        types: pd.DataFrame=pd.DataFrame({'type': ['IO', 'AO', 'TC']}),
+        trend_offset: PositiveInt=1):
     """
     Stage I of the Procedure: Locate Outliers (Baseline Function)
 
-    Five types of outliers can be considered. By default: "AO" additive outliers, "LS" level shifts, and "TC" temporary changes are selected; "IO" innovative outliers; "SLS" seasonal level shifts; "VC" variance change can also be selected.
+    Five general types of outliers can be considered. By default: "AO" additive outliers, and "TC" temporary changes are selected; "IO" innovative outliers; "STC" seasonal temporary shifts; "VC" variance change can also be selected. LS and SLS are special cases of TC and STC withd delta set to 1.
 
-    :param resid: Residuals from a time series model fitted to the data.
-    :param params: Containing the parameters of the model fitted to the data. See details below.
+    :param params: The parameter from time series model.
+    :param resid: Residual time series.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
     :param cval: The critical value to determine the significance of each type of outlier.
     :param types: A character vector indicating the types of outliers to be considered.
-    :param delta: Parameter of the temporary change type of outlier. 
-    :return:
+    :return: Identified outliers in dataframe format.
     """
-    sigma = 1.483 * np.quantile(np.abs(resid - np.quantile(resid, 0.5)), 0.5)
-    
+    sigma = 1.483 * np.quantile(np.abs(resid - np.quantile(resid, 0.5)), 0.5) ## MAD estimation
+    tmp = outliers_tstats(params, resid, order, seasonal_order, types, sigma, trend_offset) ## Quantile estimation of standard deviation
+    identified_ol = tmp[tmp['tstat'] > cval]
+    return identified_ol.groupby('t_index').apply(lambda x: x.iloc[x['tstat'].argmax()]).reset_index(drop=True)
 
+def remove_consecutive_outliers(located_ol: pd.DataFrame):
+    """
+    Identify and remove consecutive outliers.
 
-  tmp <- outliers.tstatistics(pars = pars, resid = resid, 
-    types = types, sigma = sigma, delta = delta)
-  ind <- which(abs(tmp[, , "tstat", drop = FALSE]) > cval, 
-    arr.ind = TRUE)
-  mo <- data.frame(factor(gsub("^(.*)tstats$", "\\1", dimnames(tmp)[[2]][ind[, 
-    2]]), levels = c("IO", "AO", "LS", "TC", "SLS")), ind[, 
-    1], tmp[, , "coefhat", drop = FALSE][ind], tmp[, , "tstat", 
-    drop = FALSE][ind])
-  colnames(mo) <- c("type", "ind", "coefhat", "tstat")
-  if (nrow(ind) == 1) 
-    rownames(mo) <- NULL
-  ref <- unique(mo[, "ind"][duplicated(mo[, "ind"])])
-  for (i in ref) {
-    ind <- which(mo[, "ind"] == i)
-    moind <- mo[ind, ]
-    mo <- mo[-ind[-which.max(abs(moind[, "tstat"]))], ]
-  }
-  mo
-    return
+    :param located_ol: Output from function locate_outliers.
+    :return: The outlier dataframe with consecutive outliers removed.
+    """
+    located_ol = located_ol.sort_values('t_index')
+    located_ol['cscid'] = 1
+    located_ol.loc[located_ol['t_index'].diff() == 1,'cscid'] = 0
+    located_ol['cscid'] = located_ol['cscid'].cumsum()
+    return located_ol.groupby('cscid').apply(lambda x: x.iloc[x['tstat'].argmax()]).reset_index(drop=True).drop(columns=['cscid'])
 
-def locate_outlier_iloop(ts_model:ARIMA, cval: int = 3.5, types: List[Literal['AO', 'LS', 'TC']]=['AO', 'LS', 'TC'], maxit: int=4, delta: int=0.7):
+def outlier_effect_on_residuals(
+        params: pd.Series,
+        resid: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        located_ol: pd.DataFrame) -> pd.DataFrame:
+    """
+    Get outliers effect on residuals. The VC outliers are ignored.
+
+    :param params: The parameter from time series model.
+    :param resid: Residual time series.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
+    :param located_ol: The output from remove_consecutive_outliers.
+    :return: A 2d array indicating the outlier effect on residuals (rows), for each outlier (cols).
+    """
+    seasonal_s = max(seasonal_order[3], 1)
+    ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(params, order, seasonal_order)
+    pi_coefs = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+
+    def xreg_io(indices, weights):
+        matrix_i = np.zeros((len(resid), len(indices)))
+        matrix_i[indices,:] = np.diag(weights)
+        return matrix_i
+
+    def xreg_ao(indices, weights):
+        matrix_i = np.zeros((len(resid), len(indices)))
+        matrix_i[indices,:] = np.eye(len(indices))
+        for i in range(len(indices)):
+            matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+        return matrix_i
+
+    def xreg_tc(indices, weights, delta):
+        matrix_i = np.zeros((len(resid), len(indices)))
+        matrix_i[indices,:] = np.eye(len(indices))
+        adj_ma_params = np.polymul(ma_params, np.array([-delta, 1]))
+        updated_pi_coefs = params_to_infinite_representations(ar_params, diff_params, adj_ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+        for i in range(len(indices)):
+            matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+        return matrix_i
+
+    def xreg_stc(indices, weights, delta):
+        matrix_i = np.zeros((len(resid), len(indices)))
+        matrix_i[indices,:] = np.eye(len(indices))
+        adj_ma_params = np.polymul(ma_params, np.concatenate((np.array([-delta]), np.zeros(seasonal_s-1), np.array([1]))))
+        updated_pi_coefs = params_to_infinite_representations(ar_params, diff_params, adj_ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+        for i in range(len(indices)):
+            matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+        return matrix_i
+
+    result = []
+    ids = []
+    for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'id']):
+        if ol_type[0] == 'AO':
+            result.append(xreg_ao(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'IO':
+            result.append(xreg_io(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'TC':
+            result.append(xreg_tc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'STC':
+            result.append(xreg_stc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+            ids.append(ol_type[3])
+    result = np.concatenate(result, axis=1)
+    result = pd.DataFrame(result, columns=[f'ol_type_{id}' for id in ids], index=range(result.shape[0]))
+    return result
+
+# def variance_change_on_residuals(
+#         params: pd.Series,
+#         resid: np.ndarray,
+#         order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+#         seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+#         located_ol: pd.DataFrame) -> np.ndarray:
+#     """
+#     Variance Change outlier effect on residuals.S
+
+#     :param params:
+#     :param resid:
+#     :param order:
+#     :param seasonal_order:
+#     :param located_ol:
+#     """
+#     return
+
+def locate_outlier_iloop(
+        params: pd.Series,
+        resid: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        cval: PositiveFlt = 3.5,
+        types: pd.DataFrame=pd.DataFrame({'type': ['IO', 'AO', 'TC']}),
+        maxit: PositiveInt=4,
+        trend_offset: PositiveInt=1):
     """
     Locate outliers inner loop helper.
 
-    :param resid:
     :param params:
-    :param cval:
-    :param types:
-    :param maxit:
-    :param delta:
+    :param resid:
+    :param order:
+    :param seasonal_order:
+    :param cval: The critical value to determine the significance of each type of outlier.
+    :param types: A character vector indicating the types of outliers to be considered.
+    :param maxit: Maximum number of iterations in inner loop.
+    :return: Identified outliers in dataframe format.
     """
-    resid = ts_model.resid()
+    resid_cp = resid.copy()
+
+    result = pd.DataFrame(columns=['type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
     its = 0
     while its < maxit:
-        mo = locat
-        its += 1
-    return
+        located_ol = locate_outliers(params, resid_cp, order, seasonal_order, cval, types, trend_offset)
 
-def locate_outlier_oloop():
+        located_ol = located_ol.groupby('type').apply(remove_consecutive_outliers).reset_index(drop=True)
+
+        located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
+
+        if len(located_ol.index) == 0:
+            break
+
+        result = pd.concat([result, located_ol], axis=0)
+
+        ol_effect_matrix = outlier_effect_on_residuals(params, resid_cp, order, seasonal_order, located_ol)
+
+        resid_cp -= ol_effect_matrix.sum(axis=1)
+
+        its += 1
+
+    if its == maxit:
+        warnings.warn('Maximum number of iterations reached for inner loop.')
+    return result
+
+def outlier_effect_on_responses(
+        params: pd.Series,
+        endog: np.ndarray,
+        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        located_ol: pd.DataFrame) -> pd.DataFrame:
     """
+    Get outliers effect on responses. The VC outliers are ignored.
+
+    :param params: The parameter from time series model.
+    :param endog: Response time series.
+    :param order: The order of fitted model.
+    :param seasonal_order: The seasonal order of fitted model.
+    :param located_ol: The output from remove_consecutive_outliers.
+    :return: A 2d array indicating the outlier effect on residuals (rows), for each outlier (cols).
     """
-    return
+    seasonal_s = max(seasonal_order[3], 1)
+    ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(params, order, seasonal_order)
+    psi_coefs = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(endog), right_on_left=True)
+
+    def xreg_io(indices, weights):
+        matrix_i = np.zeros((len(endog), len(indices)))
+        matrix_i[indices,:] = np.eye(len(indices))
+        for i in range(len(indices)):
+            matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(endog)-1), matrix_i[:,i])), psi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+        return matrix_i
+
+    def xreg_ao(indices, weights):
+        matrix_i = np.zeros((len(endog), len(indices)))
+        matrix_i[indices,:] = np.diag(weights)
+        return matrix_i
+
+    def xreg_tc(indices, weights, delta):
+        matrix_i = np.zeros((len(endog), len(indices)))
+        matrix_i[indices,:] = np.eye(len(indices))
+        for i in range(len(indices)):
+            matrix_i[:,i] = weights[i] * recursive_filter(matrix_i[:,i], np.array([delta]))
+        return matrix_i
+
+    def xreg_stc(indices, weights, delta):
+        matrix_i = np.zeros((len(endog), len(indices)))
+        matrix_i[indices,:] = np.diag(weights)
+        for i in range(len(indices)):
+            matrix_i[:,i] = recursive_filter(matrix_i[:,i], np.concatenate((np.zeros(seasonal_s-1), np.array([delta]))))
+        return matrix_i
+    
+    result = []
+    ids = []
+    for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'id']):
+        if ol_type[0] == 'AO':
+            result.append(xreg_ao(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'IO':
+            result.append(xreg_io(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'TC':
+            result.append(xreg_tc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+            ids.append(ol_type[3])
+        elif ol_type[0] == 'STC':
+            result.append(xreg_stc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+            ids.append(ol_type[3])
+    result = np.concatenate(result, axis=1)
+    result = pd.DataFrame(result, columns=[f'ol_type_{id}' for id in ids], index=range(result.shape[0]))
+    return result
+
+def locate_outlier_oloop(
+        endog: pd.DataFrame,
+        exog: Optional[pd.DataFrame],
+        ts_model: ARIMA,
+        fit_args: Optional[Dict[str, Any]]=None,
+        cval: PositiveFlt = 3.5,
+        types: pd.DataFrame=pd.DataFrame({'type': ['IO', 'AO', 'TC']}),
+        maxit_oloop: PositiveInt=4,
+        maxit_iloop: PositiveInt=4,
+        trend_offset: PositiveInt=1):
+    """
+    Locate outliers outer loop helper.
+
+    :param endog: a time series where outliers are to be detected.
+    :param exog: an optional matrix of regressors with the same number of rows as y.
+    :param ts_model: The fitted ARIMA model.
+    :param fit_args: The arguments passed into fit() method.
+    :param cval: The critical value to determine the significance of each type of outlier. If no value is specified for argument cval a default value based on the sample size is used. Let nn be the number of observations. If $n \leq 50$, then cval is set equal to 3.0; If $n \geq 450$, then cval is set equal to 4.0; otherwise cval is set equal to $3 + 0.0025 * (n - 50)3 + 0.0025 * (n - 50)$.
+    :param types:
+    :param maxit_oloop:
+    :param maxit_illop:
+    :param trend_offset:
+    :return:
+    """
+    endog = endog.copy()
+    order = ts_model.order
+    seasonal_order = ts_model.seasonal_order
+    params = get_params(ts_model)['coef']
+
+    resid = ts_model.resid().copy()
+
+    result = pd.DataFrame(columns=['type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+
+    tmp = order[2] + seasonal_order[3] * seasonal_order[1]
+    if tmp > 1:
+        id0resid = list(range(0, tmp))
+    else:
+        id0resid = [0, 1]
+
+    its = 0
+    while its < maxit_oloop:
+        if (resid[id0resid] > 3.5 * np.std(np.delete(resid, id0resid))).any():
+            resid[id0resid] = 0
+
+        inner_result = locate_outlier_iloop(params, resid, order, seasonal_order, cval, types, maxit_iloop, trend_offset)
+
+        inner_result = remove_consecutive_outliers(inner_result)
+
+        inner_result = inner_result[~inner_result['t_index'].isin(result['t_index'])]
+
+        if len(inner_result.index) == 0:
+            break
+
+        result = pd.concat([result, inner_result], axis=0)
+
+        ol_effect_matrix = outlier_effect_on_responses(params, endog, order, seasonal_order, inner_result)
+
+        endog -= ol_effect_matrix.sum(axis=1)
+
+        fit_args['y'] = endog
+        fit_args['x'] = exog
+        ts_model.fit(**fit_args)
+
+        resid = ts_model.resid()
+
+        its += 1
+
+    if its == maxit_oloop:
+        warnings.warn('Maximum number of iterations reached for outer loop.')
+    return result
+
+def fit_ts_model(
+        endog: pd.DataFrame,
+        exog: pd.DataFrame,
+        tsmethod: Literal['AutoARIMA', 'ARIMA'],
+        args_tsmethod: Dict[str, Any],
+        fit_args: Dict[str, Any]) -> ARIMA:
+    """
+    Fit ts model according to tsmethod and fit_args.
+
+    :param endog: a time series where outliers are to be detected.
+    :param exog: an optional matrix of regressors with the same number of rows as y.
+    :param tsmethod: The framework for time series modelling. It basically is the name of the function to which the arguments defined in args_tsmethod are referred to.
+    :param fit_args: Additional arguments besides endog and exog to be passed into fit() method.
+    :param args_tsmethod: An optional dictionary containing arguments to be passed to the function invoking the method selected in tsmethod.
+    :return: Fitted ARIMA model.
+    """
+    fit_args['y'] = endog
+    fit_args['x'] = exog
+    if tsmethod == 'AutoARIMA':
+        return AutoARIMA(**args_tsmethod).fit(**fit_args).model_
+    else:
+        return ARIMA(**args_tsmethod).fit(**fit_args)
+
+def discard_outliers(
+        located_ol: pd.DataFrame,
+        endog: pd.DataFrame,
+        exog: Optional[pd.DataFrame],
+        ts_model: ARIMA,
+        cval: PositiveFlt,
+        method: Literal['en-masse', 'bottom-up'],
+        tsmethod: Literal['AutoARIMA', 'ARIMA'],
+        args_tsmethod: Dict[str, Any],
+        fit_args: Dict[str, Any]):
+    """
+    This functions tests for the significance of a given set of outliers in a time series model that is fitted including the outliers as regressor variables.
+
+    :param located_ol:
+    :param endog: a time series where outliers are to be detected.
+    :param exog: an optional matrix of regressors with the same number of rows as y.
+    :param cval:
+    :param method:
+    :param types: A character list indicating the type of outlier to be considered by the detection procedure: innovational outliers ("IO"), additive outliers ("AO"), level shifts ("LS"), temporary changes ("TC") and seasonal level shifts ("SLS"). If None is provided, then a list of 'AO', 'LS', 'TC' is used.
+    :param tsmethod:
+    :param args_tsmethod:
+    :param fit_args:
+    :return:
+    """
+    located_ol = remove_consecutive_outliers(located_ol)
+    xreg = outlier_effect_on_responses(get_params(ts_model)['coef'], endog, ts_model.order, ts_model.seasonal_order, located_ol)
+
+    if exog is not None:
+        xreg = pd.concat([exog, xreg], axis=1)
+
+    its = 0
+    if method == 'en-masse':
+        while True:
+            ts_model = fit_ts_model(endog, xreg, tsmethod, args_tsmethod, fit_args)
+            param_table = get_params(ts_model)
+            param_table['tstat'] = param_table['coef'] / param_table['std err']
+
+            rm_ol_table = param_table[param_table[''].str.match(r'ol_type_\d+') & (param_table['tstat'] < cval)]
+
+            if len(rm_ol_table.index) > 0:
+                located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
+                located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), param_table[['', 'tstat', 'coef']].rename(columns={'': 'type', 'coef': 'coefhat'}))
+                xreg = xreg.drop(columns=rm_ol_table[''])
+            else:
+                break
+
+            its += 1
+    else:
+        located_ol = located_ol.sort_values(['tstat'], ascending=False).reset_index(drop=True)
+
+        xregaux = pd.DataFrame(index=xreg.index)
+        for i in located_ol.index:
+            xregaux = pd.concat([xregaux, xreg.loc[:,located_ol.loc[i,'type']]], axis=1)
+
+            ts_model = fit_ts_model(endog, xregaux, tsmethod, args_tsmethod, fit_args)
+            param_table = get_params(ts_model)
+
+            param_table['tstat'] = param_table['coef'] / param_table['std err']
+
+            rm_ol_table = param_table[param_table[''].str.match(r'ol_type_\d+') & (param_table['tstat'] < cval)]
+
+            if len(rm_ol_table.index) > 0:
+                located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
+                located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), param_table[['', 'tstat', 'coef']].rename(columns={'': 'type', 'coef': 'coefhat'}))
+                xregaux = xregaux.drop(columns=rm_ol_table[''])
+        xreg = xregaux
+
+    return ts_model, located_ol, xreg
+
 
 class IterativeTtestOutlierDetection:
     """
@@ -234,8 +696,7 @@ class IterativeTtestOutlierDetection:
         endog,
         exog: Optional[pd.DataFrame]=None,
         cval: Optional[PositiveFlt]=None,
-        delta: PositiveFlt = 0.7,
-        types: Optional[List[Literal['IO', 'AO', 'LS', 'TC', 'SLS', 'VC']]]=None,
+        types: pd.DataFrame=pd.DataFrame({'type': ['IO', 'AO', 'TC']}),
         maxit: PositiveInt=1,
         maxit_iloop: PositiveInt=4,
         maxit_oloop: PositiveInt=4,
@@ -243,6 +704,7 @@ class IterativeTtestOutlierDetection:
         discard_method: Literal['en-masse', 'bottom-up']='en_masse',
         discard_cval: Optional[PositiveFlt]=None,
         tsmethod: Literal["AutoARIMA", "ARIMA"]='auto.arima',
+        fit_args: Optional[Dict[str, Any]]=None,
         args_tsmethod: Optional[Dict[str, Any]]=None,
         check_rank: bool=True) -> None:
         """
@@ -251,7 +713,6 @@ class IterativeTtestOutlierDetection:
         :param endog: a time series where outliers are to be detected.
         :param exog: an optional matrix of regressors with the same number of rows as y.
         :param cval: The critical value to determine the significance of each type of outlier. If no value is specified for argument cval a default value based on the sample size is used. Let nn be the number of observations. If $n \leq 50$, then cval is set equal to 3.0; If $n \geq 450$, then cval is set equal to 4.0; otherwise cval is set equal to $3 + 0.0025 * (n - 50)3 + 0.0025 * (n - 50)$.
-        :param delta: Parameter of the temporary change type of outlier.
         :param types: A character list indicating the type of outlier to be considered by the detection procedure: innovational outliers ("IO"), additive outliers ("AO"), level shifts ("LS"), temporary changes ("TC") and seasonal level shifts ("SLS"). If None is provided, then a list of 'AO', 'LS', 'TC' is used.
         :param maxit: The maximum number of iterations.
         :param maxit_iloop: The maximum number of iterations in the inner loop. See locate_outliers.
@@ -260,6 +721,7 @@ class IterativeTtestOutlierDetection:
         :param discard_method: The method used in the second stage of the procedure. See discard.outliers.
         :param discard_cval: The critical value to determine the significance of each type of outlier in the second stage of the procedure (discard outliers). By default, the same critical value is used in the first stage of the procedure (location of outliers) and in the second stage (discard outliers). Under the framework of structural time series models I noticed that the default critical value based on the sample size is too high, since all the potential outliers located in the first stage were discarded in the second stage (even in simulated series with known location of outliers). In order to investigate this issue, the argument discard_cval has been added. In this way a different critical value can be used in the second stage. Alternatively, the argument discard_cval could be omitted and simply choose a lower critical value, cval, to be used in both stages. However, using the argument discard_cval is more convenient since it avoids locating too many outliers in the first stage. discard_cval is not affected by cval_reduce.
         :param tsmethod: The framework for time series modelling. It basically is the name of the function to which the arguments defined in args_tsmethod are referred to.
+        :param fit_args: Additional arguments besides endog and exog to be passed into fit() method.
         :param args_tsmethod: An optional dictionary containing arguments to be passed to the function invoking the method selected in tsmethod.
         :param log_file: It is the path to the file where tracking information is printed. Ignored if None.
         :param
@@ -274,10 +736,18 @@ class IterativeTtestOutlierDetection:
             else:
                 cval = 3 + 0.0025 * (len(self.endog.index) - 50)
         self.cval = cval
-        self.delta = delta
-        if types is None:
-            types = ['AO', 'LS', 'TC']
-        self.types = types
+
+        self.types = types.copy()
+        if 'delta' not in self.types.columns:
+            self.types['delta'] = np.nan
+        if 'min_n' not in self.types.columns:
+            self.types['min_n'] = np.nan
+        self.types.loc[(self.types['type'] == 'TC') & self.types['delta'].isna(),'delta'] = 0.7
+        self.types.loc[(self.types['type'] == 'STC') & self.types['delta'].isna(),'delta'] = 1
+        self.types.loc[(self.types['type'] == 'VC') & self.types['min_n'].isna(),'min_n'] = 20
+        self.types = self.types.drop_duplicates()
+        self.types['id'] = np.arange(len(self.types.index))
+
         self.maxit = maxit
         self.maxit_iloop = maxit_iloop
         self.maxit_oloop = maxit_oloop
@@ -287,6 +757,10 @@ class IterativeTtestOutlierDetection:
             discard_cval = self.cval
         self.discard_cval = discard_cval
         self.tsmethod = tsmethod
+
+        if fit_args is None:
+            fit_args = {}
+        self.fit_args = fit_args
         if args_tsmethod is None:
             args_tsmethod = {}
             if tsmethod == 'AutoARIMA':
@@ -295,7 +769,8 @@ class IterativeTtestOutlierDetection:
             else:
                 if exog is not None:
                     args_tsmethod['order'] = (0, 1, 1)
-
+        if 'trend_offset' not in args_tsmethod:
+            args_tsmethod['trend_offset'] = 1
         self.args_tsmethod = args_tsmethod
         self.check_rank = check_rank
 
@@ -303,170 +778,21 @@ class IterativeTtestOutlierDetection:
         self.ts_model = None
         self.fitted_trend = None
         self.poly_coeffs = None
-
-    def _find_poly_time_trend(self) -> np.ndarray:
-        """ 
-        Find fitted polynomial time trend.
-
-        :return: Fitted polynomial time trend which is equal in size of input endogenous time series.
-        """
-        params = self.ts_model.params()
-        trend_offset = 1
-        if 'trend_offset' in self.args_tsmethod:
-            trend_offset = self.args_tsmethod['trend_offset']
-        nobs = self.ts_model.arima_res_.nobs
-
-        time_obs = np.arange(start=trend_offset, stop=trend_offset+nobs)
-
-        other_poly = params[params.index.str.match(r'trend\.\d+')]
-        if 'intercept' in params.index:
-            other_poly['trend.0'] = params['intercept']
-        else:
-            other_poly['trend.0'] = 0
-        if 'drift' in params.index:
-            other_poly['trend.1'] = params['drift']
-        else:
-            other_poly['trend.1'] = 0
-        other_poly.index = other_poly.index.str.replace(r'trend\.', '').astype(int)
-
-        max_other_poly = other_poly.max()
-
-        fitted_trend = np.zeros(time_obs.shape)
-        for i in range(max_other_poly):
-            if i in other_poly.index:
-                fitted_trend += other_poly[i] * np.power(time_obs, i)
-
-        self.fitted_trend = fitted_trend
-        return fitted_trend
-
-    def _sarima_params_to_poly_coeffs(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """ 
-        Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters.
-
-        :return: Converted polynomials for AR polynomial, MA polynomial, sAR polynomial, sMA polynomial.
-        """
-        def fill_poly_with_zero(params):
-            for i in range(params.index.max()):
-                if i not in params:
-                    params[i] = 0
-
-        params = self.ts_model.params()
-
-        difference_d = self.ts_model.order[1]
-        difference_seasonal_d = self.ts_model.seasonal_order[1]
-        seasonal_s = max(self.ts_model.seasonal_order[3], 1)
-
-        ar_params = params[params.index.str.match(r'ar\.L\d+')]
-        ar_params *= -1
-        ar_params.index = ar_params.index.str.replace(r'ar\.L', '').astype(int)
-        ar_params[0] = 1
-        ar_params = ar_params.sort_index(ascending=False) ## Decreasing order in polynomial
-        fill_poly_with_zero(ar_params)
-
-        ar_seasonal_params = params[params.index.str.match(r'ar\.S\.L\d+')]
-        ar_seasonal_params *= -1
-        ar_seasonal_params.index = ar_seasonal_params.index.str.replace(r'ar\.S\.L', '').astype(int)
-        ar_seasonal_params[0] = 1
-        ar_seasonal_params.index *= seasonal_s
-        ar_seasonal_params = ar_seasonal_params.sort_index(ascending=False)
-        fill_poly_with_zero(ar_seasonal_params)
-
-        diff_params = reduce(np.polymul, [np.array([-1, 1])] * difference_d, np.array([1]))
-
-        ma_params = params[params.index.str.match(r'ma\.L\d+')]
-        ma_params.index = ma_params.index.str.replace(r'ma\.L', '').astype(int)
-        ma_params[0] = 1
-        ma_params = ma_params.sort_index(ascending=False) ## Decreasing order in polynomial
-        fill_poly_with_zero(ma_params)
-
-        ma_seasonal_params = params[params.index.str.match(r'ma\.S\.L\d+')]
-        ma_seasonal_params.index = ma_seasonal_params.index.str.replace(r'ma\.S\.L', '').astype(int)
-        ma_seasonal_params[0] = 1
-        ma_seasonal_params.index *= seasonal_s
-        ma_seasonal_params = ma_seasonal_params.sort_index(ascending=False)
-        fill_poly_with_zero(ma_seasonal_params)
-
-        diff_seasonal_params = reduce(np.polymul, [np.concatenate((np.array([-1]), np.zeros(seasonal_s-1), np.array([1])))] * difference_seasonal_d, np.array([1]))
-
-        self.poly_coeffs = {
-            'ar_params': ar_params,
-            'diff_params': diff_params,
-            'ma_params': ma_params,
-            'ar_seasonal_params': ar_seasonal_params,
-            'diff_seasonal_params': diff_seasonal_params,
-            'ma_seasonal_params': ma_seasonal_params
-        }
-        return ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params
-
-    def _trend_to_intercept(self) -> np.ndarray:
-        """
-        Convert fitted trend to infinite MA representation.
-        """
-        ar_params, _, diff_params, ar_seasonal_params, diff_seasonal_params, _ = self._sarima_params_to_poly_coeffs()
-
-        left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
-
-        time_trend = self._find_poly_time_trend()
-        return time_trend / left_params.sum()
-
-    def _params_to_ma(self, leads=100):
-        """
-        Convert fitted parameters to infinite MA representation.
-
-        :param leads: Truncate this number of polynomials to represent infinite ma representations.
-        """
-        ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = self._sarima_params_to_poly_coeffs()
-
-        left_params = reduce(np.polymul, [ar_params, diff_params, ar_seasonal_params, diff_seasonal_params])
-
-        right_params = reduce(np.polymul, [ma_params, ma_seasonal_params])
-
-        impluse = np.zeros(leads)
-        impluse[0] = 1
-        return signal.lfilter(right_params, left_params, impluse)
-
-    def _locate_outlier_iloop(self, ):
-        return pd.DataFrame()
-
-    def _locate_outlier_oloop(self):
-        """
-        y, fit, types = c("AO", "LS", "TC"), cval = NULL, 
-  maxit.iloop = 4, maxit.oloop = 4, delta = 0.7, logfile = NULL
-
-        :param y:
-        :param fit:
-        :param types:
-        :param cval
-        """
-        moall = pd.DataFrame(columns=['type', 'ind', 'coefhat', 'tstat'])
-        tmp = self.ts_model.order[2] + self.ts_model.seasonal_order[3] * self.ts_model.seasonal_order[1]
-        if tmp > 1:
-            id0resid = list(range(0, tmp))
-        else:
-            id0resid = [0, 1]
-
-        its = 0
-        while its < self.maxit_oloop:
-            res = self.ts_model.resid()
-            if (res[id0resid] > 3.5 * np.std(np.delete(res, id0resid))).any():
-                res[id0resid] = 0
-            mo = self._locate_outlier_iloop()
-            if len(mo.index) == 0:
-                break
-            its += 1
-
-    def _fit(self):
+    
+    def fit0(self):
         """
         """
-        if self.tsmethod == 'AutoARIMA':
-            self.ts_model = AutoARIMA(**self.args_tsmethod).fit(y=self.endog, X=self.exog).model_
-        else:
-            self.ts_model = ARIMA(**self.args_tsmethod).fit(y=self.endog, X=self.exog)
+        ## Stage 1
+        idenfitied_ols = locate_outlier_oloop(self.endog, self.exog, self.ts_model, self.fit_args, self.types, self.maxit_oloop, self.maxit_iloop, self.args_tsmethod['trend_offset'])
+
+        ## Stage 2
+        if len(idenfitied_ols.index) > 0:
+            idenfitied_ols = remove_consecutive_outliers(idenfitied_ols)
+        return
 
     def fit(self):
         """
         """
         cval0 = self.cval
-        self._fit()
 
         return
