@@ -243,7 +243,7 @@ class IterativeTtestOutlierDetection:
         cval_reduce: PositiveFlt=0.14286,
         discard_method: Literal['en-masse', 'bottom-up']='en_masse',
         discard_cval: Optional[PositiveFlt]=None,
-        tsmethod: Literal["AutoARIMA", "ARIMA"]='auto.arima',
+        tsmethod: Literal["AutoARIMA", "ARIMA"]='AutoARIMA',
         args_tsmethod: Optional[Dict[str, Any]]=None) -> None:
         """
         Initializer and configuration for IterativeTtestOutlierDetection.
@@ -332,17 +332,6 @@ class IterativeTtestOutlierDetection:
         else:
             return self.ts_model.seasonal_order
 
-    def update_resid(self, new_resid: np.ndarray):
-        """
-        Helper function for modifying fitted residuals.
-
-        :param new_resid: The new value to replace the current residuals.
-        """
-        if self.tsmethod == 'AutoARIMA':
-            self.ts_model.model_.arima_res_.resid = new_resid
-        else:
-            self.ts_model.arima_res_.resid = new_resid
-
     def get_params(self) -> pd.DataFrame:
         """
         Get parameter of fitted ts_model.
@@ -350,9 +339,11 @@ class IterativeTtestOutlierDetection:
         :return: Reformatted table of fitted parameters and the standard deviation.
         """
         if self.tsmethod == 'AutoARIMA':
-            return pd.DataFrame(self.ts_model.model_.arima_res_.summary().tables[1].data[1:], columns=self.ts_model.model_.arima_res_.summary().tables[1].data[0])
+            result = pd.DataFrame(self.ts_model.model_.arima_res_.summary().tables[1].data[1:], columns=self.ts_model.model_.arima_res_.summary().tables[1].data[0])
         else:
-            return pd.DataFrame(self.ts_model.arima_res_.summary().tables[1].data[1:], columns=self.ts_model.arima_res_.summary().tables[1].data[0])
+            result = pd.DataFrame(self.ts_model.arima_res_.summary().tables[1].data[1:], columns=self.ts_model.arima_res_.summary().tables[1].data[0])
+        result.index = result['']
+        result= result.drop(columns=]'')
 
     def fit_ts_model(
         self,
@@ -376,7 +367,8 @@ class IterativeTtestOutlierDetection:
         fit_args['x'] = exog
         if self.tsmethod == 'AutoARIMA' and fix_order:
             self.tsmethod.model_.fit(**fit_args)
-        self.ts_model.fit(**fit_args) ## self.ts_model gets updated
+        else:
+            self.ts_model.fit(**fit_args) ## self.ts_model gets updated
 
     def outliers_tstats(self, sigma) -> pd.DataFrame:
         """
@@ -618,7 +610,7 @@ class IterativeTtestOutlierDetection:
         :param id_start: The starting index to be assigned to outliers once identified.
         :return: Identified outliers in dataframe format.
         """
-        resid_cp = self.ts_model.resid().copy()
+        resid_cp = self.get_resid().copy()
 
         result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         its = 0
@@ -662,7 +654,6 @@ class IterativeTtestOutlierDetection:
 
         if (resid[id0resid] > 3.5 * np.std(np.delete(resid, id0resid))).any():
             resid[id0resid] = 0
-            self.update_resid(resid)
 
     def locate_outlier_oloop(
         self,
@@ -803,12 +794,14 @@ class IterativeTtestOutlierDetection:
 
         its = 0
         result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        start_id = 0
         while its < self.maxit:
             self.fit_ts_model(endog, exog, fit_args, False)
-            located_ol = self.locate_outlier_oloop(endog, exog, cval0, result['id'].max()+1, fit_args)
+            located_ol = self.locate_outlier_oloop(endog, exog, cval0, start_id, fit_args)
             if len(located_ol.index) > 0:
                 located_ol, endog, exog = self.discard_outliers(located_ol, endog, exog, self.discard_cval, fit_args)
                 result = pd.concat([result, located_ol], axis=0)
+                start_id = result['id'].max() + 1
             else:
                 break
 
