@@ -10,7 +10,7 @@ import pandas as pd
 from pmdarima import ARIMA, AutoARIMA
 from scipy import signal
 
-from ..utility import PositiveFlt, PositiveInt, NonnegativeInt
+from ..utility import NonnegativeInt, PositiveFlt, PositiveInt
 
 
 def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt):
@@ -44,8 +44,8 @@ def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: Pos
     return fitted_trend
 
 def sarima_params_to_poly_coeffs(params: pd.Series,
-                                 order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
-                                 seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt)) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
+                                 order: Tuple[NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt],
+                                 seasonal_order: Tuple[NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt]) -> Tuple[pd.Series, pd.Series, pd.Series, pd.Series, pd.Series, pd.Series]:
     """ 
     Convert coefficients to polynomial cofficients for AR, MA, sAR, sMA parameters, in decreasing polynomial orders.
 
@@ -102,8 +102,8 @@ def sarima_params_to_poly_coeffs(params: pd.Series,
 def find_intercept(
         params: pd.Series,
         resid: np.ndarray,
-        order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
-        seasonal_order: Tuple(NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt),
+        order: Tuple[NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt],
+        seasonal_order: Tuple[NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt, NonnegativeInt],
         trend_offset: PositiveInt) -> np.ndarray:
     """
     Convert fitted trend to infinite MA representation. Can remove this value from original time series, the residuals is fitted by SARIMAX model.
@@ -682,7 +682,6 @@ class IterativeTtestOutlierDetection:
         :return: Located outliers in a dataframe.
         """
         endog = endog.copy()
-        exog = exog.copy()
 
         result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
 
