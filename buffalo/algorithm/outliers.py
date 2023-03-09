@@ -515,13 +515,13 @@ class IterativeTtestOutlierDetection:
         result = []
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
-                result.append(xreg_ao(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+                result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'IO':
-                result.append(xreg_io(indices=temp_df['t_index'], weights=temp_df['coefhat']))
+                result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'TC':
-                result.append(xreg_tc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+                result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
             elif ol_type[0] == 'STC':
-                result.append(xreg_stc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
+                result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
         result = np.concatenate(result, axis=1)
         result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
@@ -575,24 +575,24 @@ class IterativeTtestOutlierDetection:
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 if not use_fitted_coefs:
-                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index))))
+                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index))))
                 else:
-                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy()))
+                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'IO':
                 if not use_fitted_coefs:
-                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index))))
+                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index))))
                 else:
-                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy()))
+                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'TC':
                 if not use_fitted_coefs:
-                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
+                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
-                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
             elif ol_type[0] == 'STC':
                 if not use_fitted_coefs:
-                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
+                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
-                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
         result = np.concatenate(result, axis=1)
         result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
