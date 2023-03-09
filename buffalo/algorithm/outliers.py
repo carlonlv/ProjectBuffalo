@@ -65,37 +65,35 @@ def sarima_params_to_poly_coeffs(params: pd.Series,
 
     ar_params = params[params.index.str.match(r'ar\.L\d+')]
     ar_params *= -1
-    ar_params.index = ar_params.index.str.replace(r'ar\.L', '').astype(int)
+    ar_params.index = ar_params.index.str.replace(r'ar\.L', '', regex=True).astype(int)
     ar_params[0] = 1
-    ar_params = ar_params.sort_index(ascending=False) ## Decreasing order in polynomial
     fill_poly_with_zero(ar_params)
+    ar_params = ar_params.sort_index(ascending=False) ## Decreasing order in polynomial
 
     ar_seasonal_params = params[params.index.str.match(r'ar\.S\.L\d+')]
     ar_seasonal_params *= -1
-    ar_seasonal_params.index = ar_seasonal_params.index.str.replace(r'ar\.S\.L', '').astype(int)
+    ar_seasonal_params.index = ar_seasonal_params.index.str.replace(r'ar\.S\.L', '', regex=True).astype(int)
     ar_seasonal_params[0] = 1
-    ar_seasonal_params.index *= seasonal_s
-    ar_seasonal_params = ar_seasonal_params.sort_index(ascending=False)
     fill_poly_with_zero(ar_seasonal_params)
+    ar_seasonal_params = ar_seasonal_params.sort_index(ascending=False)
 
     diff_params = reduce(np.polymul, [np.array([-1, 1])] * difference_d, np.array([1]))
-    diff_params = pd.Series(diff_params, index=np.flip(np.arange(len(diff_params))))
+    diff_params = pd.Series(diff_params, index=np.flip(np.arange(len(diff_params))), name='coef')
 
     ma_params = params[params.index.str.match(r'ma\.L\d+')]
-    ma_params.index = ma_params.index.str.replace(r'ma\.L', '').astype(int)
+    ma_params.index = ma_params.index.str.replace(r'ma\.L', '', regex=True).astype(int)
     ma_params[0] = 1
-    ma_params = ma_params.sort_index(ascending=False) ## Decreasing order in polynomial
     fill_poly_with_zero(ma_params)
+    ma_params = ma_params.sort_index(ascending=False) ## Decreasing order in polynomial
 
     ma_seasonal_params = params[params.index.str.match(r'ma\.S\.L\d+')]
-    ma_seasonal_params.index = ma_seasonal_params.index.str.replace(r'ma\.S\.L', '').astype(int)
+    ma_seasonal_params.index = ma_seasonal_params.index.str.replace(r'ma\.S\.L', '', regex=True).astype(int)
     ma_seasonal_params[0] = 1
-    ma_seasonal_params.index *= seasonal_s
-    ma_seasonal_params = ma_seasonal_params.sort_index(ascending=False)
     fill_poly_with_zero(ma_seasonal_params)
+    ma_seasonal_params = ma_seasonal_params.sort_index(ascending=False)
 
     diff_seasonal_params = reduce(np.polymul, [np.concatenate((np.array([-1]), np.zeros(seasonal_s-1), np.array([1])))] * difference_seasonal_d, np.array([1]))
-    diff_seasonal_params = pd.Series(diff_seasonal_params, index=np.flip(np.arange(len(diff_seasonal_params))))
+    diff_seasonal_params = pd.Series(diff_seasonal_params, index=np.flip(np.arange(len(diff_seasonal_params))), name='coef')
 
     return ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params
 
@@ -271,7 +269,7 @@ class IterativeTtestOutlierDetection:
         self.types.loc[(self.types['type'] == 'STC') & self.types['delta'].isna(),'delta'] = 1
         self.types.loc[(self.types['type'] == 'VC') & self.types['min_n'].isna(),'min_n'] = 20
         self.types = self.types.drop_duplicates()
-        self.types['id'] = np.arange(len(self.types.index))
+        self.types['type_id'] = np.arange(len(self.types.index))
 
         self.maxit = maxit
         self.maxit_iloop = maxit_iloop
@@ -288,11 +286,11 @@ class IterativeTtestOutlierDetection:
                 args_tsmethod['information_criterion'] = 'bic'
             else:
                 args_tsmethod['order'] = (1, 0, 1)
-        if 'trend_offset' not in args_tsmethod:
-            args_tsmethod['trend_offset'] = 1
-            self.trend_offset = 1
+        if 'sarimax_kwargs' in args_tsmethod and 'trend_offset' in args_tsmethod['sarimax_kwargs']:
+            self.trend_offset = args_tsmethod['sarimax_kwargs']['trend_offset']
         else:
-            self.trend_offset = args_tsmethod['trend_offset']
+            self.trend_offset = 1
+
         self.args_tsmethod = args_tsmethod
 
         ## Propogated later through other functions
@@ -343,7 +341,8 @@ class IterativeTtestOutlierDetection:
         else:
             result = pd.DataFrame(self.ts_model.arima_res_.summary().tables[1].data[1:], columns=self.ts_model.arima_res_.summary().tables[1].data[0])
         result.index = result['']
-        result= result.drop(columns=]'')
+        result = result.drop(columns=['']).astype(float)
+        return result
 
     def fit_ts_model(
         self,
@@ -364,7 +363,7 @@ class IterativeTtestOutlierDetection:
         else:
             fit_args = fit_args.copy()
         fit_args['y'] = endog
-        fit_args['x'] = exog
+        fit_args['X'] = exog
         if self.tsmethod == 'AutoARIMA' and fix_order:
             self.tsmethod.model_.fit(**fit_args)
         else:
@@ -387,7 +386,7 @@ class IterativeTtestOutlierDetection:
         seasonal_s = max(seasonal_order[3], 1)
         ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(params, order, seasonal_order)
         pi_coefs = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
-        ao_xy = signal.convolve(np.concatenate((resid, np.zeros(len(resid)-1))), np.flip(pi_coefs))[(len(resid)-1):(1-len(resid))]
+        ao_xy = signal.convolve(np.concatenate((resid, np.zeros(len(resid)-1))), np.flip(pi_coefs), method='direct')[(len(resid)-1):(1-len(resid))]
         rev_ao_xy = np.flip(ao_xy)
 
         result = pd.DataFrame({'residuals': resid, 't_index': np.arange(start=trend_offset, stop=trend_offset+len(resid))})
@@ -406,8 +405,8 @@ class IterativeTtestOutlierDetection:
                 dinvf = recursive_filter(pi_coefs, np.array([delta]))
                 xxinv = np.flip(1 / np.cumsum(np.power(dinvf, 2)))
                 coef_hat = x_y * xxinv
-                result.loc[result['type'] == 'AO','coefhat'] = coef_hat
-                result.loc[result['type'] == 'AO','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+                result.loc[result['type'] == 'TC','coefhat'] = coef_hat
+                result.loc[result['type'] == 'TC','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
             elif types.loc[idx,'type'] == 'STC':
                 delta = types.loc[idx,'delta']
                 rm_id = np.arange(seasonal_s)
@@ -423,8 +422,8 @@ class IterativeTtestOutlierDetection:
                 r_d = np.array([(bt_sqrd[i][1] * (i-1)) / (bt_sqrd[i][1] * (len(resid)-i+1)) for i in range(len(bt_sqrd))])
                 coef_hat = np.zeros(len(resid))
                 coef_hat[(min_n+1):(len(resid)-min_n)] = np.sqrt(r_d) - 1
-                result.loc[result['type'] == 'STC','coefhat'] = coef_hat
-                result.loc[result['type'] == 'STC','tstat'] = r_d.max() / r_d.min()
+                result.loc[result['type'] == 'VC','coefhat'] = coef_hat
+                result.loc[result['type'] == 'VC','tstat'] = r_d.max() / r_d.min()
             else:
                 result.loc[result['type'] == 'IO','coefhat'] = resid
                 result.loc[result['type'] == 'IO','tstat'] = resid / sigma
@@ -443,7 +442,7 @@ class IterativeTtestOutlierDetection:
         resid = self.get_resid()
         sigma = 1.483 * np.quantile(np.abs(resid - np.quantile(resid, 0.5)), 0.5) ## MAD estimation
         tmp = self.outliers_tstats(sigma) ## Quantile estimation of standard deviation
-        identified_ol = tmp[tmp['tstat'] > cval]
+        identified_ol = tmp[tmp['tstat'].abs() > cval]
         identified_ol = identified_ol.groupby('t_index').apply(lambda x: x.iloc[x['tstat'].argmax()]).reset_index(drop=True)
         identified_ol['id'] = range(id_start, id_start + len(identified_ol.index))
         return identified_ol
@@ -476,6 +475,14 @@ class IterativeTtestOutlierDetection:
         seasonal_s = max(seasonal_order[3], 1)
         ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params = sarima_params_to_poly_coeffs(params, order, seasonal_order)
         pi_coefs = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+        tc_ma_coefs = {}
+        for delta in located_ol[located_ol['type'] == 'TC']['delta'].unique():
+            delta_term = np.array([-delta, 1])
+            tc_ma_coefs[delta] = params_to_infinite_representations(ar_params, diff_params, np.polymul(ma_params, delta_term), ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+        seasonal_tc_ma_coefs = {}
+        for delta in located_ol[located_ol['type'] == 'STC']['delta'].unique():
+            delta_term = np.concatenate((np.array([-delta]), np.zeros(seasonal_s-1), np.array([1])))
+            seasonal_tc_ma_coefs[delta] = params_to_infinite_representations(ar_params, diff_params, ma_params, ar_seasonal_params, diff_seasonal_params, np.polymul(ma_seasonal_params, delta_term), leads=len(resid), right_on_left=False)
 
         def xreg_io(indices, weights):
             matrix_i = np.zeros((len(resid), len(indices)))
@@ -486,44 +493,37 @@ class IterativeTtestOutlierDetection:
             matrix_i = np.zeros((len(resid), len(indices)))
             matrix_i[indices,:] = np.eye(len(indices))
             for i in range(len(indices)):
-                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         def xreg_tc(indices, weights, delta):
             matrix_i = np.zeros((len(resid), len(indices)))
             matrix_i[indices,:] = np.eye(len(indices))
-            adj_ma_params = np.polymul(ma_params, np.array([-delta, 1]))
-            updated_pi_coefs = params_to_infinite_representations(ar_params, diff_params, adj_ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+            updated_pi_coefs = tc_ma_coefs[delta]
             for i in range(len(indices)):
-                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         def xreg_stc(indices, weights, delta):
             matrix_i = np.zeros((len(resid), len(indices)))
             matrix_i[indices,:] = np.eye(len(indices))
-            adj_ma_params = np.polymul(ma_params, np.concatenate((np.array([-delta]), np.zeros(seasonal_s-1), np.array([1]))))
-            updated_pi_coefs = params_to_infinite_representations(ar_params, diff_params, adj_ma_params, ar_seasonal_params, diff_seasonal_params, ma_seasonal_params, leads=len(resid), right_on_left=False)
+            updated_pi_coefs = seasonal_tc_ma_coefs[delta]
             for i in range(len(indices)):
-                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         result = []
-        ids = []
-        for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'id']):
+        for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 result.append(xreg_ao(indices=temp_df['t_index'], weights=temp_df['coefhat']))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'IO':
                 result.append(xreg_io(indices=temp_df['t_index'], weights=temp_df['coefhat']))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'TC':
                 result.append(xreg_tc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'STC':
                 result.append(xreg_stc(indices=temp_df['t_index'], weights=temp_df['coefhat'], delta=ol_type[1]))
-                ids.append(ol_type[3])
         result = np.concatenate(result, axis=1)
-        result = pd.DataFrame(result, columns=[f'ol_type_{id}' for id in ids], index=range(result.shape[0]))
+        result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
 
     def outlier_effect_on_responses(self, endog, located_ol: pd.DataFrame, use_fitted_coefs: bool=True) -> pd.DataFrame:
@@ -549,7 +549,7 @@ class IterativeTtestOutlierDetection:
             matrix_i = np.zeros((len(endog), len(indices)))
             matrix_i[indices,:] = np.eye(len(indices))
             for i in range(len(indices)):
-                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(endog)-1), matrix_i[:,i])), psi_coefs)[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(endog)-1), matrix_i[:,i])), psi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         def xreg_ao(indices, weights):
@@ -572,34 +572,29 @@ class IterativeTtestOutlierDetection:
             return matrix_i
 
         result = []
-        ids = []
-        for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'id']):
+        for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 if not use_fitted_coefs:
                     result.append(xreg_ao(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index))))
                 else:
                     result.append(xreg_ao(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy()))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'IO':
                 if not use_fitted_coefs:
                     result.append(xreg_io(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index))))
                 else:
                     result.append(xreg_io(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy()))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'TC':
                 if not use_fitted_coefs:
                     result.append(xreg_tc(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
                     result.append(xreg_tc(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
-                ids.append(ol_type[3])
             elif ol_type[0] == 'STC':
                 if not use_fitted_coefs:
                     result.append(xreg_stc(indices=temp_df['t_index'].to_numpy(), weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
                     result.append(xreg_stc(indices=temp_df['t_index'].to_numpy(), weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
-                ids.append(ol_type[3])
         result = np.concatenate(result, axis=1)
-        result = pd.DataFrame(result, columns=[f'ol_type_{id}' for id in ids], index=range(result.shape[0]))
+        result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
 
     def locate_outlier_iloop(self, cval: PositiveFlt, id_start: NonnegativeInt):
@@ -612,14 +607,14 @@ class IterativeTtestOutlierDetection:
         """
         resid_cp = self.get_resid().copy()
 
-        result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         its = 0
         while its < self.maxit_iloop:
             located_ol = self.locate_outliers(cval, id_start)
 
             located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
 
-            located_ol = located_ol.groupby('type').apply(self.remove_consecutive_outliers).reset_index(drop=True)
+            located_ol = located_ol.groupby('type_id').apply(self.remove_consecutive_outliers).reset_index(drop=True)
 
             located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
@@ -652,7 +647,7 @@ class IterativeTtestOutlierDetection:
         else:
             id0resid = [0, 1]
 
-        if (resid[id0resid] > 3.5 * np.std(np.delete(resid, id0resid))).any():
+        if (np.abs(resid[id0resid]) > 3.5 * np.std(np.delete(resid, id0resid))).any():
             resid[id0resid] = 0
 
     def locate_outlier_oloop(
@@ -674,7 +669,7 @@ class IterativeTtestOutlierDetection:
         """
         endog = endog.copy()
 
-        result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
 
         its = 0
         while its < self.maxit_oloop:
@@ -735,7 +730,7 @@ class IterativeTtestOutlierDetection:
                 param_table = self.get_params()
                 param_table['tstat'] = param_table['coef'] / param_table['std err']
 
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_type_\d+') & (param_table['tstat'] < cval)]
+                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'] < cval)]
 
                 if len(rm_ol_table.index) > 0:
                     located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
@@ -757,7 +752,7 @@ class IterativeTtestOutlierDetection:
 
                 param_table['tstat'] = param_table['coef'] / param_table['std err']
 
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_type_\d+') & (param_table['tstat'] < cval)]
+                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'] < cval)]
 
                 if len(rm_ol_table.index) > 0:
                     located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
@@ -793,7 +788,7 @@ class IterativeTtestOutlierDetection:
         cval0 = self.cval
 
         its = 0
-        result = pd.DataFrame(columns=['id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         start_id = 0
         while its < self.maxit:
             self.fit_ts_model(endog, exog, fit_args, False)
