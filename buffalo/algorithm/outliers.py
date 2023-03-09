@@ -443,7 +443,7 @@ class IterativeTtestOutlierDetection:
         sigma = 1.483 * np.quantile(np.abs(resid - np.quantile(resid, 0.5)), 0.5) ## MAD estimation
         tmp = self.outliers_tstats(sigma) ## Quantile estimation of standard deviation
         identified_ol = tmp[tmp['tstat'].abs() > cval]
-        identified_ol = identified_ol.groupby('t_index').apply(lambda x: x.iloc[x['tstat'].argmax()]).reset_index(drop=True)
+        identified_ol = identified_ol.groupby('t_index').apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True)
         identified_ol['id'] = range(id_start, id_start + len(identified_ol.index))
         return identified_ol
 
@@ -458,7 +458,7 @@ class IterativeTtestOutlierDetection:
         located_ol['cscid'] = 1
         located_ol.loc[located_ol['t_index'].diff() == 1,'cscid'] = 0
         located_ol['cscid'] = located_ol['cscid'].cumsum()
-        return located_ol.groupby('cscid').apply(lambda x: x.iloc[x['tstat'].argmax()]).reset_index(drop=True).drop(columns=['cscid'])
+        return located_ol.groupby('cscid').apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True).drop(columns=['cscid'])
 
     def outlier_effect_on_residuals(self, located_ol: pd.DataFrame) -> pd.DataFrame:
         """
@@ -605,7 +605,7 @@ class IterativeTtestOutlierDetection:
         :param id_start: The starting index to be assigned to outliers once identified.
         :return: Identified outliers in dataframe format.
         """
-        resid_cp = self.get_resid().copy()
+        resid = self.get_resid()
 
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         its = 0
@@ -625,7 +625,7 @@ class IterativeTtestOutlierDetection:
 
             ol_effect_matrix = self.outlier_effect_on_residuals(located_ol)
 
-            resid_cp -= ol_effect_matrix.sum(axis=1)
+            resid -= ol_effect_matrix.sum(axis=1)
 
             its += 1
 
@@ -730,7 +730,7 @@ class IterativeTtestOutlierDetection:
                 param_table = self.get_params()
                 param_table['tstat'] = param_table['coef'] / param_table['std err']
 
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'] < cval)]
+                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'].abs() < cval)]
 
                 if len(rm_ol_table.index) > 0:
                     located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
@@ -741,7 +741,7 @@ class IterativeTtestOutlierDetection:
 
                 its += 1
         else:
-            located_ol = located_ol.sort_values(['tstat'], ascending=False).reset_index(drop=True)
+            located_ol = located_ol.sort_values(['tstat'], ascending=False, key=abs).reset_index(drop=True)
 
             xregaux = pd.DataFrame(index=xreg.index)
             for i in located_ol.index:
@@ -752,7 +752,7 @@ class IterativeTtestOutlierDetection:
 
                 param_table['tstat'] = param_table['coef'] / param_table['std err']
 
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'] < cval)]
+                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'].abs() < cval)]
 
                 if len(rm_ol_table.index) > 0:
                     located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
