@@ -493,7 +493,7 @@ class IterativeTtestOutlierDetection:
             matrix_i = np.zeros((len(resid), len(indices)))
             matrix_i[indices,:] = np.eye(len(indices))
             for i in range(len(indices)):
-                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         def xreg_tc(indices, weights, delta):
@@ -501,7 +501,7 @@ class IterativeTtestOutlierDetection:
             matrix_i[indices,:] = np.eye(len(indices))
             updated_pi_coefs = tc_ma_coefs[delta]
             for i in range(len(indices)):
-                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         def xreg_stc(indices, weights, delta):
@@ -509,7 +509,7 @@ class IterativeTtestOutlierDetection:
             matrix_i[indices,:] = np.eye(len(indices))
             updated_pi_coefs = seasonal_tc_ma_coefs[delta]
             for i in range(len(indices)):
-                matrix_i[:,i] = weights.iloc[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
+                matrix_i[:,i] = weights[i] * signal.convolve(np.concatenate((np.zeros(len(resid)-1), matrix_i[:,i])), updated_pi_coefs, method='direct')[(matrix_i.shape[0]-1):(1-matrix_i.shape[0])]
             return matrix_i
 
         result = []
