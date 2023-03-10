@@ -239,7 +239,7 @@ class IterativeTtestOutlierDetection:
         maxit_oloop: PositiveInt=4,
         cval: Optional[PositiveFlt]=None,
         cval_reduce: PositiveFlt=0.14286,
-        discard_method: Literal['en-masse', 'bottom-up']='en_masse',
+        discard_method: Literal['en-masse', 'bottom-up']='en-masse',
         discard_cval: Optional[PositiveFlt]=None,
         tsmethod: Literal["AutoARIMA", "ARIMA"]='AutoARIMA',
         args_tsmethod: Optional[Dict[str, Any]]=None) -> None:
@@ -515,13 +515,13 @@ class IterativeTtestOutlierDetection:
         result = []
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
-                result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
+                result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'IO':
-                result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
+                result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'TC':
-                result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
             elif ol_type[0] == 'STC':
-                result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
         result = np.concatenate(result, axis=1)
         result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
@@ -575,24 +575,24 @@ class IterativeTtestOutlierDetection:
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 if not use_fitted_coefs:
-                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index))))
+                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index))))
                 else:
-                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
+                    result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'IO':
                 if not use_fitted_coefs:
-                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index))))
+                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index))))
                 else:
-                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy()))
+                    result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
             elif ol_type[0] == 'TC':
                 if not use_fitted_coefs:
-                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
+                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
-                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                    result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
             elif ol_type[0] == 'STC':
                 if not use_fitted_coefs:
-                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
+                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
-                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy()-1, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                    result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
         result = np.concatenate(result, axis=1)
         result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(result.shape[0]))
         return result
@@ -610,7 +610,7 @@ class IterativeTtestOutlierDetection:
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         its = 0
         while its < self.maxit_iloop:
-            located_ol = self.locate_outliers(cval, id_start)
+            located_ol = self.locate_outliers(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
             located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
 
@@ -675,7 +675,7 @@ class IterativeTtestOutlierDetection:
         while its < self.maxit_oloop:
             self.zero_inflated_first_resid()
 
-            inner_result = self.locate_outlier_iloop(cval, id_start)
+            inner_result = self.locate_outlier_iloop(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
             inner_result = inner_result[inner_result['type'] != 'VC'] ## TODO: Add VC support remove VC from response
 
@@ -727,15 +727,17 @@ class IterativeTtestOutlierDetection:
         if self.discard_method == 'en-masse':
             while True:
                 self.fit_ts_model(endog, xreg, fit_args, True)
-                param_table = self.get_params()
-                param_table['tstat'] = param_table['coef'] / param_table['std err']
+                param_table = self.get_params().reset_index().rename(columns={'': 'id'})
+                ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
+                ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
+                ol_param_table['tstat'] = ol_param_table['coef'] / ol_param_table['std err']
 
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'].abs() < cval)]
+                rm_ol_table = ol_param_table[ol_param_table['tstat'].abs() < cval]
 
                 if len(rm_ol_table.index) > 0:
-                    located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
-                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), param_table[['', 'tstat', 'coef']].rename(columns={'': 'type', 'coef': 'coefhat'}))
-                    xreg = xreg.drop(columns=rm_ol_table[''])
+                    located_ol = located_ol[~located_ol['id'].isin(rm_ol_table['id'])]
+                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
+                    xreg = xreg.drop(columns='ol_id_' + rm_ol_table['id'].astype(str))
                 else:
                     break
 
@@ -745,19 +747,20 @@ class IterativeTtestOutlierDetection:
 
             xregaux = pd.DataFrame(index=xreg.index)
             for i in located_ol.index:
-                xregaux = pd.concat([xregaux, xreg.loc[:,located_ol.loc[i,'type']]], axis=1)
+                xregaux = pd.concat([xregaux, xreg.loc[:,f'ol_id_{located_ol.loc[i,"id"]}']], axis=1)
 
                 self.fit_ts_model(endog, xregaux, fit_args, True)
-                param_table = self.get_params()
+                param_table = self.get_params().reset_index().rename(columns={'': 'id'})
+                ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
+                ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
+                ol_param_table['tstat'] = ol_param_table['coef'] / ol_param_table['std err']
 
-                param_table['tstat'] = param_table['coef'] / param_table['std err']
-
-                rm_ol_table = param_table[param_table[''].str.match(r'ol_id_\d+') & (param_table['tstat'].abs() < cval)]
+                rm_ol_table = ol_param_table[ol_param_table['tstat'].abs() < cval]
 
                 if len(rm_ol_table.index) > 0:
-                    located_ol = located_ol[~located_ol['type'].isin(rm_ol_table[''])]
-                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), param_table[['', 'tstat', 'coef']].rename(columns={'': 'type', 'coef': 'coefhat'}))
-                    xregaux = xregaux.drop(columns=rm_ol_table[''])
+                    located_ol = located_ol[~located_ol['id'].isin(rm_ol_table['id'])]
+                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
+                    xregaux = xregaux.drop(columns='ol_id_' + rm_ol_table['id'].astype(str))
             xreg = xregaux
 
         ## Adjust endog: TODO: include VC
