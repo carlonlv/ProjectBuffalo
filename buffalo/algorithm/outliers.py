@@ -629,7 +629,7 @@ class IterativeTtestOutlierDetection:
 
             located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
 
-            located_ol = located_ol.groupby('type_id').apply(self.remove_consecutive_outliers).reset_index(drop=True)
+            located_ol = located_ol.groupby('type_id', group_keys=False).apply(self.remove_consecutive_outliers).reset_index(drop=True)
 
             located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
