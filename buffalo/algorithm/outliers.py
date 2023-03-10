@@ -1,6 +1,7 @@
 """
 This module contains algorithms for identifying/removing/predicting outliers.
 """
+import copy
 import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
@@ -357,9 +358,13 @@ class IterativeTtestOutlierDetection:
         :return: A numpy array of fitted parameters, the same value can be passed as starting parameter of a new fit.
         """
         if self.tsmethod == 'AutoARIMA':
-            return self.ts_model.model_.params()
+            result = self.ts_model.model_.params()
         else:
-            return self.ts_model.params()
+            result = self.ts_model.params()
+        
+        if isinstance(result, pd.Series):
+            result = result.to_numpy()
+        return result
 
     def fit_ts_model(
         self,
@@ -749,23 +754,22 @@ class IterativeTtestOutlierDetection:
         """
         endog = endog.copy()
 
-        plt.plot(endog)
-        plt.show()
-
         located_ol = self.remove_consecutive_outliers(located_ol, 'type_id') ## This is sorted
         xreg = self.outlier_effect_on_responses(endog, located_ol, False)
 
         if exog is not None:
             xreg = pd.concat([exog, xreg], axis=1)
 
+        if fit_args is None:
+            fit_args = {}
+
+        if 'cov_type' not in fit_args:
+            fit_args['cov_type'] = 'robust_approx'
+
         its = 0
         if self.discard_method == 'en-masse':
             while True:
-                if fit_args is None:
-                    fit_args = {}
-                fit_args['start_params'] = np.concatenate((self.get_raw_params(), located_ol['coefhat'].to_numpy()))
-                fit_args['transformed'] = False
-                fit_args['cov_type'] = 'robust_approx'
+                fit_args['start_params'] = np.concatenate((located_ol['coefhat'].to_numpy(), self.get_raw_params()))
 
                 self.fit_ts_model(endog, xreg, fit_args, True)
                 param_table = self.get_params().reset_index().rename(columns={'': 'id'})
@@ -779,12 +783,7 @@ class IterativeTtestOutlierDetection:
 
                 if len(ol_param_table.index) > 0:
                     located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
-
                     xreg = xreg['ol_id_' + ol_param_table['id'].astype(str)]
-
-                    ol_effect = np.matmul(xreg.to_numpy(), ol_param_table['coef'].to_numpy())
-                    plt.plot(endog - ol_effect)
-                    plt.show()
 
                 if len(rm_ol_table.index) == 0:
                     break
@@ -793,11 +792,14 @@ class IterativeTtestOutlierDetection:
         else:
             located_ol = located_ol.sort_values(['tstat'], ascending=False, key=abs).reset_index(drop=True)
 
-            xregaux = pd.DataFrame(index=xreg.index)
+            xregaux = pd.DataFrame()
             for i in located_ol.index:
                 xregaux = pd.concat([xregaux, xreg.loc[:,f'ol_id_{located_ol.loc[i,"id"]}']], axis=1)
 
                 self.fit_ts_model(endog, xregaux, fit_args, True)
+
+                backup = copy.deepcopy(self.ts_model)
+
                 param_table = self.get_params().reset_index().rename(columns={'': 'id'})
                 ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
                 ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
@@ -805,17 +807,18 @@ class IterativeTtestOutlierDetection:
 
                 rm_ol_table = ol_param_table[ol_param_table['tstat'].abs() < cval]
 
-                located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
+                ol_param_table = ol_param_table[ol_param_table['tstat'].abs() >= cval]
 
                 if len(rm_ol_table.index) > 0:
-                    located_ol = located_ol[~located_ol['id'].isin(rm_ol_table['id'])]
+                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
                     xregaux = xregaux.drop(columns='ol_id_' + rm_ol_table['id'].astype(str))
+                    self.ts_model = backup ## Revert back to previously fitted model
 
             xreg = xregaux
 
         ## Adjust endog: TODO: include VC
         ol_effect = np.matmul(xreg.to_numpy(), ol_param_table['coef'].to_numpy())
-        adj_endog = endog - ol_effect.sum(axis=1)
+        adj_endog = endog - ol_effect
 
         return located_ol, adj_endog, xreg
 
