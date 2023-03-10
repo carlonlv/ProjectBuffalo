@@ -3,7 +3,7 @@ This module contains algorithms for identifying/removing/predicting outliers.
 """
 import warnings
 from functools import reduce
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -312,8 +312,8 @@ class IterativeTtestOutlierDetection:
             result = self.ts_model.model_.resid()
         else:
             result = self.ts_model.resid()
-        
-        if type(result) == pd.Series:
+
+        if isinstance(result, pd.Series):
             return result.to_numpy()
         else:
             return result
@@ -350,6 +350,17 @@ class IterativeTtestOutlierDetection:
         result = result.drop(columns=['']).astype(float)
         return result
 
+    def get_raw_params(self) -> np.ndarray:
+        """
+        Get ordered parameter of fitted ts_model.
+
+        :return: A numpy array of fitted parameters, the same value can be passed as starting parameter of a new fit.
+        """
+        if self.tsmethod == 'AutoARIMA':
+            return self.ts_model.model_.params()
+        else:
+            return self.ts_model.params()
+
     def fit_ts_model(
         self,
         endog: pd.DataFrame,
@@ -366,14 +377,10 @@ class IterativeTtestOutlierDetection:
         """
         if fit_args is None:
             fit_args = {}
-        else:
-            fit_args = fit_args.copy()
-        fit_args['y'] = endog
-        fit_args['X'] = exog
         if self.tsmethod == 'AutoARIMA' and fix_order:
-            self.tsmethod.model_.fit(**fit_args)
+            self.tsmethod.model_.fit(y = endog, X = exog, **fit_args)
         else:
-            self.ts_model.fit(**fit_args) ## self.ts_model gets updated
+            self.ts_model.fit(y = endog, X = exog, **fit_args) ## self.ts_model gets updated
 
     def outliers_tstats(self, sigma) -> pd.DataFrame:
         """
@@ -450,24 +457,25 @@ class IterativeTtestOutlierDetection:
         tmp = self.outliers_tstats(sigma) ## Quantile estimation of standard deviation
         identified_ol = tmp[tmp['tstat'].abs() > cval]
         if len(identified_ol.index) > 0:
-            identified_ol = identified_ol.groupby('t_index').apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True)
+            identified_ol = identified_ol.groupby('t_index', group_keys=False).apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True)
             identified_ol['id'] = range(id_start, id_start + len(identified_ol.index))
         return identified_ol
 
-    def remove_consecutive_outliers(self, located_ol: pd.DataFrame):
+    def remove_consecutive_outliers(self, located_ol: pd.DataFrame, group: Optional[Union[List[str], str]]=None) -> pd.DataFrame:
         """
         Identify and remove consecutive outliers.
 
         :param located_ol: Output from function locate_outliers.
         :return: The outlier dataframe with consecutive outliers removed.
         """
-        if len(located_ol.index) > 0:
+        if group is None:
             located_ol = located_ol.sort_values('t_index')
             located_ol['cscid'] = 1
             located_ol.loc[located_ol['t_index'].diff() == 1,'cscid'] = 0
             located_ol['cscid'] = located_ol['cscid'].cumsum()
-            return located_ol.groupby('cscid').apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True).drop(columns=['cscid'])
-        return located_ol
+            return located_ol.groupby('cscid', group_keys=False).apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True)
+        else:
+            return located_ol.groupby(group, dropna=False, group_keys=False).apply(self.remove_consecutive_outliers).sort_values('id')
 
     def outlier_effect_on_residuals(self, located_ol: pd.DataFrame) -> pd.DataFrame:
         """
@@ -522,20 +530,23 @@ class IterativeTtestOutlierDetection:
             return matrix_i
 
         result = []
+        ids = []
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'IO':
                 result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'TC':
                 result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'STC':
                 result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
-        if len(result) > 0:
-            result = np.concatenate(result, axis=1)
-            result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(resid.shape[0]))
-        else:
-            result = pd.DataFrame(index=range(resid.shape[0]))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
+        result = np.concatenate(result, axis=1)
+        result = pd.DataFrame(result, columns=ids, index=range(resid.shape[0]))
+        result = result['ol_id_' + located_ol['id'].astype('str')]
         return result
 
     def outlier_effect_on_responses(self, endog, located_ol: pd.DataFrame, use_fitted_coefs: bool=True) -> pd.DataFrame:
@@ -584,32 +595,36 @@ class IterativeTtestOutlierDetection:
             return matrix_i
 
         result = []
+        ids = []
         for ol_type, temp_df in located_ol.groupby(['type', 'delta', 'min_n', 'type_id'], dropna=False):
             if ol_type[0] == 'AO':
                 if not use_fitted_coefs:
                     result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index))))
                 else:
                     result.append(xreg_ao(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'IO':
                 if not use_fitted_coefs:
                     result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index))))
                 else:
                     result.append(xreg_io(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy()))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'TC':
                 if not use_fitted_coefs:
                     result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
                     result.append(xreg_tc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
             elif ol_type[0] == 'STC':
                 if not use_fitted_coefs:
                     result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=np.ones(len(temp_df.index)), delta=ol_type[1]))
                 else:
                     result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
-        if len(result) > 0:
-            result = np.concatenate(result, axis=1)
-            result = pd.DataFrame(result, columns='ol_id_' + located_ol['id'].astype(str), index=range(endog.shape[0]))
-        else:
-            result = pd.DataFrame(index=range(endog.shape[0]))
+                ids.append('ol_id_' + temp_df['id'].astype(str))
+
+        result = np.concatenate(result, axis=1)
+        result = pd.DataFrame(result, columns=ids, index=range(endog.shape[0]))
+        result = result['ol_id_' + located_ol['id'].astype('str')]
         return result
 
     def locate_outlier_iloop(self, cval: PositiveFlt, id_start: NonnegativeInt):
@@ -627,14 +642,14 @@ class IterativeTtestOutlierDetection:
         while its < self.maxit_iloop:
             located_ol = self.locate_outliers(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
-            located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
-
-            located_ol = located_ol.groupby('type_id', group_keys=False).apply(self.remove_consecutive_outliers).reset_index(drop=True)
-
-            located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
-
             if len(located_ol.index) == 0:
                 break
+
+            located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
+
+            located_ol = self.remove_consecutive_outliers(located_ol, 'type_id')
+
+            located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
             result = pd.concat([result, located_ol], axis=0)
 
@@ -646,7 +661,7 @@ class IterativeTtestOutlierDetection:
 
         if its == self.maxit_iloop:
             warnings.warn('Maximum number of iterations reached for inner loop.')
-        return result
+        return result.sort_values('id')
 
     def zero_inflated_first_resid(self):
         """
@@ -692,14 +707,14 @@ class IterativeTtestOutlierDetection:
 
             inner_result = self.locate_outlier_iloop(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
-            inner_result = inner_result[inner_result['type'] != 'VC'] ## TODO: Add VC support remove VC from response
-
-            inner_result = self.remove_consecutive_outliers(inner_result)
-
-            inner_result = inner_result[~inner_result['t_index'].isin(result['t_index'])]
-
             if len(inner_result.index) == 0:
                 break
+
+            inner_result = inner_result[inner_result['type'] != 'VC'] ## TODO: Add VC support remove VC from response
+
+            inner_result = self.remove_consecutive_outliers(inner_result, 'type_id')
+
+            inner_result = inner_result[~inner_result['t_index'].isin(result['t_index'])]
 
             result = pd.concat([result, inner_result], axis=0)
 
@@ -713,7 +728,7 @@ class IterativeTtestOutlierDetection:
 
         if its == self.maxit_oloop:
             warnings.warn('Maximum number of iterations reached for outer loop.')
-        return result
+        return result.sort_values('id')
 
     def discard_outliers(
         self,
@@ -737,7 +752,7 @@ class IterativeTtestOutlierDetection:
         plt.plot(endog)
         plt.show()
 
-        located_ol = self.remove_consecutive_outliers(located_ol)
+        located_ol = self.remove_consecutive_outliers(located_ol, 'type_id') ## This is sorted
         xreg = self.outlier_effect_on_responses(endog, located_ol, False)
 
         if exog is not None:
@@ -746,6 +761,12 @@ class IterativeTtestOutlierDetection:
         its = 0
         if self.discard_method == 'en-masse':
             while True:
+                if fit_args is None:
+                    fit_args = {}
+                fit_args['start_params'] = np.concatenate((self.get_raw_params(), located_ol['coefhat'].to_numpy()))
+                fit_args['transformed'] = False
+                fit_args['cov_type'] = 'robust_approx'
+
                 self.fit_ts_model(endog, xreg, fit_args, True)
                 param_table = self.get_params().reset_index().rename(columns={'': 'id'})
                 ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
@@ -756,13 +777,11 @@ class IterativeTtestOutlierDetection:
 
                 ol_param_table = ol_param_table[ol_param_table['tstat'].abs() >= cval]
 
-                located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
+                if len(ol_param_table.index) > 0:
+                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
 
-                xreg = xreg['ol_id_' + ol_param_table['id'].astype(str)]
+                    xreg = xreg['ol_id_' + ol_param_table['id'].astype(str)]
 
-                if xreg.shape[1] == 0:
-                    xreg = None
-                else:
                     ol_effect = np.matmul(xreg.to_numpy(), ol_param_table['coef'].to_numpy())
                     plt.plot(endog - ol_effect)
                     plt.show()
@@ -800,7 +819,7 @@ class IterativeTtestOutlierDetection:
 
         return located_ol, adj_endog, xreg
 
-    def fit(self, endog, exog, fit_args) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    def fit(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame]=None, fit_args: Optional[Dict[str, Any]]=None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Automatic Procedure for Detection of Outliers.
 
