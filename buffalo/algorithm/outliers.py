@@ -478,7 +478,7 @@ class IterativeTtestOutlierDetection:
             located_ol['cscid'] = 1
             located_ol.loc[located_ol['t_index'].diff() == 1,'cscid'] = 0
             located_ol['cscid'] = located_ol['cscid'].cumsum()
-            return located_ol.groupby('cscid', group_keys=False).apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True)
+            return located_ol.groupby('cscid', group_keys=False).apply(lambda x: x.iloc[x['tstat'].abs().argmax()]).reset_index(drop=True).drop(columns='cscid')
         else:
             return located_ol.groupby(group, dropna=False, group_keys=False).apply(self.remove_consecutive_outliers).sort_values('id')
 
@@ -643,6 +643,7 @@ class IterativeTtestOutlierDetection:
         resid = self.get_resid()
 
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = result.astype({'type_id': int, 'id': int, 'type': str, 'residuals': float, 't_index': int, 'coefhat': float, 'tstat': float, 'delta': float, 'min_n': int})
         its = 0
         while its < self.maxit_iloop:
             located_ol = self.locate_outliers(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
@@ -705,6 +706,7 @@ class IterativeTtestOutlierDetection:
         endog = endog.copy()
 
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = result.astype({'type_id': int, 'id': int, 'type': str, 'residuals': float, 't_index': int, 'coefhat': float, 'tstat': float, 'delta': float, 'min_n': int})
 
         its = 0
         while its < self.maxit_oloop:
@@ -844,22 +846,26 @@ class IterativeTtestOutlierDetection:
         cval0 = self.cval
 
         its = 0
+        adj_endog = endog.copy()
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
+        result = result.astype({'type_id': int, 'id': int, 'type': str, 'residuals': float, 't_index': int, 'coefhat': float, 'tstat': float, 'delta': float, 'min_n': int})
         while its < self.maxit:
-            self.fit_ts_model(endog, exog, fit_args, False)
+            self.fit_ts_model(adj_endog, exog, fit_args, False)
 
-            located_ol = self.locate_outlier_oloop(endog, exog, cval0, np.nanmax([0, result['id'].max()+1]).astype(int), fit_args)
+            located_ol = self.locate_outlier_oloop(adj_endog, exog, cval0, np.nanmax([0, result['id'].max()+1]).astype(int), fit_args)
 
             located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
             if len(located_ol.index) > 0:
-                located_ol, endog = self.discard_outliers(located_ol, endog, exog, self.discard_cval, fit_args)
+                located_ol, adj_endog = self.discard_outliers(located_ol, adj_endog, exog, self.discard_cval, fit_args)
                 result = pd.concat([result, located_ol], axis=0)
             else:
                 break
 
             its += 1
             cval0 = cval0 * (1 - self.cval_reduce)
+
+        self.fit_ts_model(endog, exog, fit_args, False)
 
         xreg = self.outlier_effect_on_responses(endog, result, False)
         if exog is not None:
@@ -873,7 +879,8 @@ class IterativeTtestOutlierDetection:
 
         fit_args['start_params'] = np.concatenate((result['coefhat'].to_numpy(), self.get_raw_params()))
         self.fit_ts_model(endog, exog, fit_args, False)
-        return result, endog, xreg
+
+        return result, adj_endog, xreg
 
     # def plot_outliers(self, ol_matrix: pd.DataFrame, adjused_endog: pd.DataFrame, adjused_exog: pd.DataFrame):
     #     """
