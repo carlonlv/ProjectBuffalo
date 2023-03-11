@@ -361,7 +361,7 @@ class IterativeTtestOutlierDetection:
             result = self.ts_model.model_.params()
         else:
             result = self.ts_model.params()
-        
+
         if isinstance(result, pd.Series):
             result = result.to_numpy()
         return result
@@ -387,7 +387,7 @@ class IterativeTtestOutlierDetection:
         else:
             self.ts_model.fit(y = endog, X = exog, **fit_args) ## self.ts_model gets updated
 
-    def outliers_tstats(self, sigma) -> pd.DataFrame:
+    def outliers_tstats(self, sigma: PositiveFlt) -> pd.DataFrame:
         """
         Compute t-statistics for the significance of outliers.
 
@@ -647,14 +647,14 @@ class IterativeTtestOutlierDetection:
         while its < self.maxit_iloop:
             located_ol = self.locate_outliers(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
+            located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
+
             if len(located_ol.index) == 0:
                 break
 
             located_ol = located_ol[located_ol['type'] != 'VC'] ## TODO: Add VC support remove VC from residuals
 
             located_ol = self.remove_consecutive_outliers(located_ol, 'type_id')
-
-            located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
             result = pd.concat([result, located_ol], axis=0)
 
@@ -712,14 +712,14 @@ class IterativeTtestOutlierDetection:
 
             inner_result = self.locate_outlier_iloop(cval, np.nanmax([id_start, result['id'].max()+1]).astype(int))
 
+            inner_result = inner_result[~inner_result['t_index'].isin(result['t_index'])]
+
             if len(inner_result.index) == 0:
                 break
 
             inner_result = inner_result[inner_result['type'] != 'VC'] ## TODO: Add VC support remove VC from response
 
             inner_result = self.remove_consecutive_outliers(inner_result, 'type_id')
-
-            inner_result = inner_result[~inner_result['t_index'].isin(result['t_index'])]
 
             result = pd.concat([result, inner_result], axis=0)
 
@@ -741,7 +741,7 @@ class IterativeTtestOutlierDetection:
         endog: pd.DataFrame,
         exog: Optional[pd.DataFrame],
         cval: PositiveFlt,
-        fit_args: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        fit_args: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame]:
         """
         This functions tests for the significance of a given set of outliers in a time series model that is fitted including the outliers as regressor variables.
 
@@ -820,7 +820,7 @@ class IterativeTtestOutlierDetection:
         ol_effect = np.matmul(xreg.to_numpy(), ol_param_table['coef'].to_numpy())
         adj_endog = endog - ol_effect
 
-        return located_ol, adj_endog, xreg
+        return located_ol, adj_endog
 
     def fit(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame]=None, fit_args: Optional[Dict[str, Any]]=None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
@@ -847,9 +847,13 @@ class IterativeTtestOutlierDetection:
         result = pd.DataFrame(columns=['type_id', 'id', 'type', 'residuals', 't_index', 'coefhat', 'tstat', 'delta', 'min_n'])
         while its < self.maxit:
             self.fit_ts_model(endog, exog, fit_args, False)
+
             located_ol = self.locate_outlier_oloop(endog, exog, cval0, np.nanmax([0, result['id'].max()+1]).astype(int), fit_args)
+
+            located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
+
             if len(located_ol.index) > 0:
-                located_ol, endog, exog = self.discard_outliers(located_ol, endog, exog, self.discard_cval, fit_args)
+                located_ol, endog = self.discard_outliers(located_ol, endog, exog, self.discard_cval, fit_args)
                 result = pd.concat([result, located_ol], axis=0)
             else:
                 break
@@ -857,7 +861,19 @@ class IterativeTtestOutlierDetection:
             its += 1
             cval0 = cval0 * (1 - self.cval_reduce)
 
-        return result, endog, exog
+        xreg = self.outlier_effect_on_responses(endog, result, False)
+        if exog is not None:
+            xreg = pd.concat([exog, xreg], axis=1)
+
+        if fit_args is None:
+            fit_args = {}
+
+        if 'cov_type' not in fit_args:
+            fit_args['cov_type'] = 'robust_approx'
+
+        fit_args['start_params'] = np.concatenate((result['coefhat'].to_numpy(), self.get_raw_params()))
+        self.fit_ts_model(endog, exog, fit_args, False)
+        return result, endog, xreg
 
     # def plot_outliers(self, ol_matrix: pd.DataFrame, adjused_endog: pd.DataFrame, adjused_exog: pd.DataFrame):
     #     """
@@ -867,4 +883,4 @@ class IterativeTtestOutlierDetection:
     #     :param adjusted_endog: Adjusted endogenous time series.
     #     :param adjusted_exog: Adjusted exogenous time series.
     #     """
-    #     merged_ts = 
+    #     merged_ts =
