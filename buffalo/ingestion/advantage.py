@@ -405,12 +405,24 @@ class AdvantageStockGrepper:
             horizon = horizon,
             apikey = self._api_key)
 
-        response = requests.get(url, timeout=10)
-        data = json.loads(response.text)
-        if len(data) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
+        if function == 'EARNINGS_CALENDAR':
+            data = pd.read_csv(url)
+            if len(data.index) == 0:
+                warnings.warn(f'Reading from {url} results in 0 rows.')
+        else:
+            response = requests.get(url, timeout=10)
+            data = json.loads(response.text)
+            if len(data) == 0:
+                warnings.warn(f'Reading from {url} results in 0 rows.')
 
-        return pd.json_normalize(data)
+        if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS']:
+            annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
+            quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
+            return pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
+        elif function in ['OVERVIEW']:
+            return pd.json_normalize(data)
+        else: ## EARNINGS_CALENDAR
+            return data
 
     def listing_info_download(
         self,

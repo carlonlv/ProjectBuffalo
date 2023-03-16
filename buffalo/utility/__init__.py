@@ -16,6 +16,16 @@ NonnegativeFlt = NewType('NonnegativeFloat', float)
 PositiveInt = NewType('PositiveInteger', int)
 PositiveFlt = NewType('PositiveFloat', float)
 
+Prob = NewType('Probability', float)
+
+class Probability(float):
+    """ Custom data type for probability to enforce type checking/
+    """
+    def __new__(cls, value):
+        if value < 0 or value > 1:
+            raise ValueError("Probability cannot be negative or greater than 1.")
+        return super().__new__(cls, value)
+
 class NonnegativeInteger(int):
     """ Custom data type of nonnegative integer to enforce type checking.
     """
