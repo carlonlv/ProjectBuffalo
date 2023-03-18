@@ -65,6 +65,19 @@ class AdvantageStockGrepper:
             lst.append(f'{key}={value}')
         return self.url_base + '&'.join(lst)
 
+    def _check_args(self, ingested_result: pd.DataFrame, url: str):
+        """
+        """
+        if 'Invalid API call' in ingested_result.iloc[0, 0]:
+            raise ValueError(f'Invalid arguments passed from {url}.')
+        elif 'unlock all premium endpoints' in ingested_result.iloc[0, 0]:
+            raise PermissionError(f'Premium api key needed from {url}.')
+        elif 'higher API call frequency' in ingested_result.iloc[0, 0]:
+            raise ConnectionRefusedError(f'Request frequency limit reached for this key {url}.')
+
+        if len(ingested_result) == 0:
+            warnings.warn('Ingestion results in 0 rows.')
+
     def stock_download(
             self,
             symbol: str,
@@ -100,9 +113,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def currency_exchange_download(
@@ -123,10 +134,9 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
-        if len(data) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
-        return pd.json_normalize(data)
+        result = pd.json_normalize(data)
+        self._check_args(result, url)
+        return result
 
     def forex_download(
             self,
@@ -162,9 +172,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def crypto_exchange_download(
@@ -198,9 +206,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def commodity_price_download(
@@ -239,9 +245,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def econ_download(
@@ -290,9 +294,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def currency_list_download(self, currency: Literal['physical', 'digital']='physical'):
@@ -307,9 +309,7 @@ class AdvantageStockGrepper:
             url = 'https://www.alphavantage.co/digital_currency_list/'
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def market_news_sentiment_download(
@@ -379,7 +379,9 @@ class AdvantageStockGrepper:
 
         result = result.drop(columns=['topics', 'ticker_sentiment'])
 
-        return result.merge(topic_lst), result.merge(ticker_lst)
+        result = result.merge(topic_lst).merge(ticker_lst)
+        self._check_args(result, url)
+        return result
 
     def company_info_download(
         self,
@@ -418,11 +420,14 @@ class AdvantageStockGrepper:
         if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS']:
             annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
-            return pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
+            result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         elif function in ['OVERVIEW']:
-            return pd.json_normalize(data)
+            result = pd.json_normalize(data)
         else: ## EARNINGS_CALENDAR
-            return data
+            result = data
+
+        self._check_args(result, url)
+        return result
 
     def listing_info_download(
         self,
@@ -442,9 +447,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def ipo_calendar_download(self) -> pd.Timestamp:
@@ -458,9 +461,7 @@ class AdvantageStockGrepper:
         url = self._construct_url(function = function, apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def trend_indicator_download(
@@ -551,9 +552,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def momentum_indicator_download(
@@ -594,9 +593,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def oscillator_indicator_download(
@@ -672,9 +669,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def volume_indicator_download(
@@ -713,9 +708,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def volatility_indicator_download(
@@ -744,9 +737,7 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result
 
     def cycle_indicator_download(
@@ -802,7 +793,5 @@ class AdvantageStockGrepper:
             apikey = self._api_key)
 
         result = pd.read_csv(url)
-        if len(result.index) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
-
+        self._check_args(result, url)
         return result

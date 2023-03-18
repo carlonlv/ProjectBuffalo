@@ -6,7 +6,6 @@ import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pmdarima import ARIMA, AutoARIMA

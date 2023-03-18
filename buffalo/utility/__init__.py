@@ -5,6 +5,7 @@ Common helper functions that can be useful to all modules.
 import inspect
 import os
 import warnings
+import re
 from typing import Any, Callable, Dict, List, NewType
 
 import numpy as np
@@ -138,3 +139,22 @@ def find_nearest_in_list(item: Any, lst: List[Any], round_up: bool=False, round_
             warnings.warn(f'{item} is greater (out of bound) than acceptable {concat_list(n_lst)}')
             return max(lst)
     return min(lst, key=lambda y: abs(y - item))
+
+def create_and_dodge_new_name(lst: List[str], prefix: str, suffix: str) -> str:
+    """
+    Find the used name {prefix}{digits}{suffix} in the list. Find the smallest number that is not used, and returns the name.
+    Helpful when creating default naming. E.g. prefix = 'NewFile', suffix = '.txt'.
+
+    :param lst: A list of strings to be searched.
+    :param prefix: The prefix value.
+    :param suffix: The suffix value.
+    :return: A dodged new name.
+    """
+    patt = f'{prefix}\d*{suffix}'
+    lst = [x for x in lst if re.match(x, patt)]
+    lst = [int(x.replace(prefix, '').replace(suffix, '')) if x != prefix + suffix else 0 for x in lst]
+    if len(lst) == 0:
+        return prefix + suffix
+    else:
+        next_num = max(lst) + 1
+        return prefix + str(next_num) + suffix
