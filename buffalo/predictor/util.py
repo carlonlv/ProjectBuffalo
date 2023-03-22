@@ -2,8 +2,7 @@
 This module contains helper functions to manipulate predictors.
 """
 
-import sqlite3
-from typing import List, Literal, Optional, Tuple, Union
+from typing import List, Optional, Union
 
 import pandas as pd
 import torch

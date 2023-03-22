@@ -67,12 +67,13 @@ class AdvantageStockGrepper:
 
     def _check_args(self, ingested_result: pd.DataFrame, url: str):
         """
+        Check the retuned dataframe and catch and raise error if detected.
         """
-        if 'Invalid API call' in ingested_result.iloc[0, 0]:
+        if isinstance(ingested_result.iloc[0, 0], str) and 'Invalid API call' in ingested_result.iloc[0, 0]:
             raise ValueError(f'Invalid arguments passed from {url}.')
-        elif 'unlock all premium endpoints' in ingested_result.iloc[0, 0]:
+        elif isinstance(ingested_result.iloc[0, 0], str) and 'unlock all premium endpoints' in ingested_result.iloc[0, 0]:
             raise PermissionError(f'Premium api key needed from {url}.')
-        elif 'higher API call frequency' in ingested_result.iloc[0, 0]:
+        elif isinstance(ingested_result.iloc[0, 0], str) and 'higher API call frequency' in ingested_result.iloc[0, 0]:
             raise ConnectionRefusedError(f'Request frequency limit reached for this key {url}.')
 
         if len(ingested_result) == 0:
