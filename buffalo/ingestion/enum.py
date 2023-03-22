@@ -5,21 +5,6 @@ This module contains all the enumerator types that are useful in data ingestion.
 import enum
 
 
-class Storage(enum.Enum):
-    """ File types enum for storing data.
-    """
-    SQLITE = "sqlite"
-    CSV = "csv"
-    PICKLE = "pkl"
-
-
-class Frquency(enum.Enum):
-    """ Frequency of Data
-    """
-    ONE_MIN = "1m"
-    FIVE_MIN = "5m"
-
-
 class API(enum.Enum):
     """ Supported API enums for data ingestion.
     """
@@ -51,7 +36,7 @@ class DataType(enum.Enum):
     CRYPTO = enum.auto()
     COMMODITY = enum.auto()
     ECON = enum.auto()
-    COMPARY = enum.auto()
+    COMPANY = enum.auto()
     TREND_INDICATOR = enum.auto()
     CYCLE_INDICATOR = enum.auto()
     VOLATILITY_INDICATOR = enum.auto()

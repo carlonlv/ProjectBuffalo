@@ -24,7 +24,7 @@ class AdvantageStockGrepper:
             (enum.DataType.STOCK, enum.IngestionType.REST): self.stock_download,
             (enum.DataType.CRYPTO, enum.IngestionType.REST): self.crypto_exchange_download,
             (enum.DataType.FOREX, enum.IngestionType.REST): self.forex_download,
-            (enum.DataType.COMPARY, enum.IngestionType.REST): self.company_info_download,
+            (enum.DataType.COMPANY, enum.IngestionType.REST): self.company_info_download,
             (enum.DataType.ECON, enum.IngestionType.REST): self.econ_download,
             (enum.DataType.TREND_INDICATOR, enum.IngestionType.REST): self.trend_indicator_download,
             (enum.DataType.CYCLE_INDICATOR, enum.IngestionType.REST): self.cycle_indicator_download,
@@ -135,8 +135,8 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
-        result = pd.json_normalize(data)
         self._check_args(result, url)
+        result = pd.json_normalize(data)
         return result
 
     def forex_download(
@@ -365,6 +365,8 @@ class AdvantageStockGrepper:
         if len(data) == 0:
             warnings.warn(f'Reading from {url} results in 0 rows.')
 
+        self._check_args(data, url)
+
         result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
         result = result.reset_index(drop=False)
 
@@ -381,7 +383,7 @@ class AdvantageStockGrepper:
         result = result.drop(columns=['topics', 'ticker_sentiment'])
 
         result = result.merge(topic_lst).merge(ticker_lst)
-        self._check_args(result, url)
+
         return result
 
     def company_info_download(
@@ -400,6 +402,7 @@ class AdvantageStockGrepper:
             5. EARNINGS: The annual and quarterly earnings (EPS) for the company of interest. Quarterly data also includes analyst estimates and surprise metrics.
             6. EARNINGS_CALENDAR: A list of company earnings expected in the next 3, 6, or 12 months.
         :param symbol: The symbol of the token of your choice. For example: symbol=IBM.
+        :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively.
         :return: Downloaded data frame.
         """
         url = self._construct_url(
@@ -418,16 +421,21 @@ class AdvantageStockGrepper:
             if len(data) == 0:
                 warnings.warn(f'Reading from {url} results in 0 rows.')
 
-        if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS']:
+        self._check_args(data, url)
+
+        if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW']:
             annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
             result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         elif function in ['OVERVIEW']:
             result = pd.json_normalize(data)
+        elif function in ['EARNINGS']:
+            annual_data = pd.json_normalize(data, record_path='annualEarnings', meta='symbol').assign(freq = 'annual')
+            quarterly_data = pd.json_normalize(data, record_path='quarterlyEarnings', meta='symbol').assign(freq = 'quarterly')
+            result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         else: ## EARNINGS_CALENDAR
             result = data
 
-        self._check_args(result, url)
         return result
 
     def listing_info_download(

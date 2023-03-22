@@ -5,9 +5,10 @@ This module stores all the implementation related to data ingestion streaming(Sy
 import sqlite3
 import time
 import warnings
-from typing import List, Optional, Union, overload
+from typing import List, Optional, Union
 
 import pandas as pd
+from tqdm import tqdm
 
 from ..utility import (PositiveFlt, PositiveInt, concat_list,
                        create_and_dodge_new_name, create_parent_directory)
@@ -40,55 +41,55 @@ class DataIngestion:
 
     def ingestion_from_web(
             self,
-            data_type: enum.DataType,
-            ingestion_type: enum.IngestionType,
-            end_points: Optional[Union[enum.API, List[enum.API]]]=None,
-            data_name: Optional[str]=None,
-            **ingestion_args) -> None:
+            args_df: pd.DataFrame,
+            wait_time: PositiveFlt=60,
+            max_retries: PositiveInt=5):
         """
         Download data from web. Cache the loaded data into memory.
 
-        :param data_type: The data type to be ingested.
-        :param ingestion_type: The type of ingestion.
-        :param end_points: The optional endpoints to be used. Enpoints not initialized are not used.
-        :param ingestion_args: The additional arguments passed into ingestion method.
-        """
-        if end_points is None:
-            end_points = self.end_points.keys()
-        else:
-            remove_end_points = end_points[end_points not in self.end_points]
-            if len(remove_end_points) > 0:
-                warnings.warn(f'{concat_list(remove_end_points)} excluded since they are not included in initialization.')
-            end_points = end_points[end_points not in remove_end_points]
-
-        target_end_points = {k: v for k, v in self.end_points.items() if (data_type, ingestion_type) in v.ingestion_methods}
-
-        if len(target_end_points) == 0:
-            raise ValueError(f'{data_type}, {ingestion_type} not supported by endpoints included by any of the endpoints.')
-
-        target_end_point = list(target_end_points.keys())[0]
-        if len(target_end_points) > 0:
-            warnings.warn(f'Multiple endpoints support detected, ({concat_list(target_end_points.keys())}), {target_end_point} used.')
-        target_end_point = target_end_points[target_end_point]
-
-        if data_name is None:
-            data_name = create_and_dodge_new_name(self.data.keys(), 'NewFile', '')
-
-        self.data[data_name] = target_end_point.ingestion_methods[(data_type, ingestion_type)](**ingestion_args)
-
-    @overload
-    def ingestion_from_web(self, args_df: pd.DataFrame, wait_time: PositiveFlt=60, max_retries: PositiveInt=5):
-        """
-        Download data from web. Cache the loaded data into memory.
-
-        :param args_df: The dataframe containing ingestion arguments, each row represents one ingestion call.
+        :param args_df: The dataframe containing ingestion arguments, each row represents one ingestion call. data_type and ingestion_type must be included in the dataframe columns to indicate the function to be called. Additionally, data_name maybe provided as columns to name the ingested data. If data_name is not provided, then default names are assigned. Note that dataframes with the same data_name are concatenated. end_points can be optionally provided to only use the provided end_points. If end_points is not provided (default), all of the inited endpoints will be searched and first supported endpoint will be used.
         :param wait_time: Wait time to retry ingestion from web. Only used when requests are too frequent. Unit in seconds.
         :param max_retries: The number of retries allowed for each argument before expection is thrown.
         """
-        for i in args_df.index:
+        def _ingestion_from_web(data_type, ingestion_type, end_points=None, data_name=None, **ingestion_args):
+            if end_points is None:
+                end_points = self.end_points.keys()
+            else:
+                remove_end_points = end_points[end_points not in self.end_points]
+                if len(remove_end_points) > 0:
+                    warnings.warn(f'{concat_list(remove_end_points)} excluded since they are not included in initialization.')
+                end_points = end_points[end_points not in remove_end_points]
+
+            target_end_points = {k: v for k, v in self.end_points.items() if (data_type, ingestion_type) in v.ingestion_methods}
+
+            if len(target_end_points) == 0:
+                raise ValueError(f'{data_type}, {ingestion_type} not supported by endpoints included by any of the endpoints.')
+
+            target_end_point = list(target_end_points.keys())[0]
+            if len(target_end_points) > 1:
+                warnings.warn(f'Multiple endpoints support detected, ({concat_list(target_end_points.keys())}), {target_end_point} used.')
+            target_end_point = target_end_points[target_end_point]
+
+            if data_name is None:
+                data_name = create_and_dodge_new_name(self.data.keys(), 'NewFile', '')
+
+            new_data = target_end_point.ingestion_methods[(data_type, ingestion_type)](**ingestion_args)
+
+            for ing_k, ing_v in ingestion_args.items():
+                if ing_k not in new_data.columns:
+                    new_data[ing_k] = ing_v
+
+            if data_name in self.data:
+                self.data[data_name] = pd.concat([self.data[data_name], new_data], axis=0).reset_index(drop=True)
+            else:
+                self.data[data_name] = new_data
+
+        assert 'data_type' in args_df.columns and 'ingestion_type' in args_df.columns
+
+        for i in tqdm(args_df.index):
             retries = 0
             try:
-                self.ingestion_from_web(**args_df.loc[i].to_dict())
+                _ingestion_from_web(**args_df.loc[i].to_dict())
             except ConnectionRefusedError:
                 if retries > max_retries:
                     raise
