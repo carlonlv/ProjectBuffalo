@@ -4,7 +4,7 @@ This module provide api access to Alpha-advantage api.
 
 import json
 import warnings
-from typing import Callable, Dict, Literal, Optional, Tuple
+from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
 import pandas as pd
 import requests
@@ -65,16 +65,33 @@ class AdvantageStockGrepper:
             lst.append(f'{key}={value}')
         return self.url_base + '&'.join(lst)
 
-    def _check_args(self, ingested_result: pd.DataFrame, url: str):
+    def _check_args(self, ingested_result: Union[pd.DataFrame, dict], url: str):
         """
         Check the retuned dataframe and catch and raise error if detected.
         """
-        if isinstance(ingested_result.iloc[0, 0], str) and 'Invalid API call' in ingested_result.iloc[0, 0]:
-            raise ValueError(f'Invalid arguments passed from {url}.')
-        elif isinstance(ingested_result.iloc[0, 0], str) and 'unlock all premium endpoints' in ingested_result.iloc[0, 0]:
-            raise PermissionError(f'Premium api key needed from {url}.')
-        elif isinstance(ingested_result.iloc[0, 0], str) and 'higher API call frequency' in ingested_result.iloc[0, 0]:
-            raise ConnectionRefusedError(f'Request frequency limit reached for this key {url}.')
+        if isinstance(ingested_result, pd.DataFrame):
+            if 'Error Message' in ingested_result.columns:
+                msg = ingested_result['Error Message'].iloc[0]
+            elif 'Note' in ingested_result.columns:
+                msg = ingested_result['Note'].iloc[0]
+        else:
+            msg = None
+        if isinstance(ingested_result, dict) and any([x in ingested_result for x in ['Error Message', 'Note']]):
+            if 'Error Message' in ingested_result:
+                msg = ingested_result['Error Message']
+            elif 'Note' in ingested_result:
+                msg = ingested_result['Note']
+        else:
+            msg = None
+        if msg is not None:
+            if 'Invalid API call' in msg:
+                raise ValueError(f'Invalid arguments passed from {url}.')
+            elif 'unlock all premium endpoints' in msg:
+                raise PermissionError(f'Premium api key needed from {url}.')
+            elif 'higher API call frequency' in msg:
+                raise ConnectionRefusedError(f'Premium api key needed from {url}.')
+            elif 'This API function' in msg:
+                raise ValueError(f'Invalid function passed from {url}')
 
         if len(ingested_result) == 0:
             warnings.warn('Ingestion results in 0 rows.')
@@ -135,8 +152,8 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
-        self._check_args(result, url)
         result = pd.json_normalize(data)
+        self._check_args(result, url)
         return result
 
     def forex_download(
@@ -362,8 +379,6 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = json.loads(response.text)
-        if len(data) == 0:
-            warnings.warn(f'Reading from {url} results in 0 rows.')
 
         self._check_args(data, url)
 
@@ -402,24 +417,28 @@ class AdvantageStockGrepper:
             5. EARNINGS: The annual and quarterly earnings (EPS) for the company of interest. Quarterly data also includes analyst estimates and surprise metrics.
             6. EARNINGS_CALENDAR: A list of company earnings expected in the next 3, 6, or 12 months.
         :param symbol: The symbol of the token of your choice. For example: symbol=IBM.
-        :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively.
+        :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively. Only used when function is EARNINGS_CALENDAR.
         :return: Downloaded data frame.
         """
-        url = self._construct_url(
-            function = function,
-            symbol = symbol,
-            horizon = horizon,
-            apikey = self._api_key)
-
         if function == 'EARNINGS_CALENDAR':
+            acceptable_horizon = [None, '3month', '6month', '12month']
+            assert horizon in acceptable_horizon, f'horizon needs to be one of {concat_list(acceptable_horizon)}.'
+
+            url = self._construct_url(
+                function = function,
+                symbol = symbol,
+                horizon = horizon,
+                apikey = self._api_key)
+
             data = pd.read_csv(url)
-            if len(data.index) == 0:
-                warnings.warn(f'Reading from {url} results in 0 rows.')
         else:
+            url = self._construct_url(
+                function = function,
+                symbol = symbol,
+                apikey = self._api_key)
+
             response = requests.get(url, timeout=10)
             data = json.loads(response.text)
-            if len(data) == 0:
-                warnings.warn(f'Reading from {url} results in 0 rows.')
 
         self._check_args(data, url)
 
@@ -697,8 +716,7 @@ class AdvantageStockGrepper:
             3. AD: Chaikin A/D line (AD) values.
             4. ADOSC: Chaikin A/D oscillator (ADOSC) values.
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
-        :param interval: Time interval between two consecutive data points in the time series. In keeping with mainstream investment literatures on VWAP, the following intraday intervals are supported: 1min, 5min, 15min, 30min, 60min. For other indicators, the following values are supported: 1min,
-            5min, 15min, 30min, 60min, daily, weekly, monthly.
+        :param interval: Time interval between two consecutive data points in the time series. In keeping with mainstream investment literatures on VWAP, the following intraday intervals are supported: 1min, 5min, 15min, 30min, 60min. For other indicators, the following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param fastperiod: The time period of the fast EMA. Positive integers are accepted. By default, fastperiod=3. Only used when function is ADOSC.
         :param slowperiod: The time period of the slow EMA. Positive integers are accepted. By default, slowperiod=10. Only used when function is ADOSC.
         :return: Downloaded data frame.
