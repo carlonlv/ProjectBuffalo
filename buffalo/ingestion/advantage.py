@@ -2,7 +2,6 @@
 This module provide api access to Alpha-advantage api.
 """
 
-import json
 import warnings
 from typing import Callable, Dict, Literal, Optional, Tuple, Union
 
@@ -150,8 +149,20 @@ class AdvantageStockGrepper:
             to_currecy = to_currecy,
             apikey = self._api_key)
 
+        schema = ['Realtime Currency Exchange Rate.1. From_Currency Code',
+                  'Realtime Currency Exchange Rate.2. From_Currency Name',
+                  'Realtime Currency Exchange Rate.3. To_Currency Code',
+                  'Realtime Currency Exchange Rate.4. To_Currency Name',
+                  'Realtime Currency Exchange Rate.5. Exchange Rate',
+                  'Realtime Currency Exchange Rate.6. Last Refreshed',
+                  'Realtime Currency Exchange Rate.7. Time Zone',
+                  'Realtime Currency Exchange Rate.8. Bid Price',
+                  'Realtime Currency Exchange Rate.9. Ask Price']
+
         response = requests.get(url, timeout=10)
-        data = json.loads(response.text)
+        data = response.json()
+        if len(data) == 0:
+            return pd.DataFrame(columns=schema)
         result = pd.json_normalize(data)
         self._check_args(result, url)
         return result
@@ -256,13 +267,19 @@ class AdvantageStockGrepper:
             acceptable_intervals = [None, 'monthly', 'quarterly', 'annual']
             assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
 
+        schema = ['name', 'interval', 'unit', 'date', 'value']
+
         url = self._construct_url(
             function = commodity,
             interval = interval,
-            datatype = 'csv',
+            datatype = 'json',
             apikey = self._api_key)
 
-        result = pd.read_csv(url)
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if len(data) == 0:
+            return pd.DataFrame(columns=schema)
+        result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
         self._check_args(result, url)
         return result
 
@@ -304,6 +321,8 @@ class AdvantageStockGrepper:
         if function != 'TREASURY_YIELD':
             maturity = None
 
+        schema = ['name', 'interval', 'unit', 'date', 'value']
+
         url = self._construct_url(
             function = function,
             maturity = maturity,
@@ -311,7 +330,11 @@ class AdvantageStockGrepper:
             datatype = 'csv',
             apikey = self._api_key)
 
-        result = pd.read_csv(url)
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if len(data) == 0:
+            return pd.DataFrame(columns=schema)
+        result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
         self._check_args(result, url)
         return result
 
@@ -377,10 +400,31 @@ class AdvantageStockGrepper:
             limit = limit,
             apikey = self._api_key)
 
-        response = requests.get(url, timeout=10)
-        data = json.loads(response.text)
+        schema = ['items',
+                  'sentiment_score_definition',
+                  'relevance_score_definition',
+                  'title',
+                  'url',
+                  'time_published',
+                  'authors',
+                  'summary',
+                  'banner_image',
+                  'source',
+                  'category_within_source',
+                  'source_domain',
+                  'topic',
+                  'relevance_score',
+                  'overall_sentiment_score',
+                  'overall_sentiment_label',
+                  'ticker',
+                  'relevance_score',
+                  'ticker_sentiment_score',
+                  'ticker_sentiment_label']
 
-        self._check_args(data, url)
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if len(data) == 0:
+            return pd.DataFrame(columns=schema)
 
         result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
         result = result.reset_index(drop=False)
@@ -432,13 +476,87 @@ class AdvantageStockGrepper:
 
             data = pd.read_csv(url)
         else:
-            url = self._construct_url(
-                function = function,
-                symbol = symbol,
-                apikey = self._api_key)
+            if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS']:
+                schema = ['symbol',
+                          'fiscalDateEnding',
+                          'reportedCurrency',
+                          'grossProfit',
+                          'totalRevenue',
+                          'costOfRevenue',
+                          'costofGoodsAndServicesSold',
+                          'operatingIncome',
+                          'sellingGeneralAndAdministrative',
+                          'researchAndDevelopment',
+                          'operatingExpenses',
+                          'investmentIncomeNet',
+                          'netInterestIncome',
+                          'interestIncome',
+                          'interestExpense',
+                          'nonInterestIncome',
+                          'otherNonOperatingIncome',
+                          'depreciation',
+                          'depreciationAndAmortization',
+                          'incomeBeforeTax',
+                          'incomeTaxExpense',
+                          'interestAndDebtExpense',
+                          'netIncomeFromContinuingOperations',
+                          'comprehensiveIncomeNetOfTax',
+                          'ebit',
+                          'ebitda',
+                          'netIncome',
+                          'freq']
+            else:
+                schema = ['Symbol',
+                          'AssetType',
+                          'Name',
+                          'Description',
+                          'CIK',
+                          'Exchange',
+                          'Currency',
+                          'Country',
+                          'Sector',
+                          'Industry',
+                          'Address',
+                          'FiscalYearEnd',
+                          'LatestQuarter',
+                          'MarketCapitalization',
+                          'EBITDA',
+                          'PERatio',
+                          'PEGRatio',
+                          'BookValue',
+                          'DividendPerShare',
+                          'DividendYield',
+                          'EPS',
+                          'RevenuePerShareTTM',
+                          'ProfitMargin',
+                          'OperatingMarginTTM',
+                          'ReturnOnAssetsTTM',
+                          'ReturnOnEquityTTM',
+                          'RevenueTTM',
+                          'GrossProfitTTM',
+                          'DilutedEPSTTM',
+                          'QuarterlyEarningsGrowthYOY',
+                          'QuarterlyRevenueGrowthYOY',
+                          'AnalystTargetPrice',
+                          'TrailingPE',
+                          'ForwardPE',
+                          'PriceToSalesRatioTTM',
+                          'PriceToBookRatio',
+                          'EVToRevenue',
+                          'EVToEBITDA',
+                          'Beta',
+                          '52WeekHigh',
+                          '52WeekLow',
+                          '50DayMovingAverage',
+                          '200DayMovingAverage',
+                          'SharesOutstanding',
+                          'DividendDate',
+                          'ExDividendDate']
 
             response = requests.get(url, timeout=10)
-            data = json.loads(response.text)
+            data = response.json()
+            if len(data) == 0:
+                return pd.DataFrame(columns=schema)
 
         self._check_args(data, url)
 
