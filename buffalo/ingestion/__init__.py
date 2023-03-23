@@ -76,7 +76,7 @@ class DataIngestion:
             new_data = target_end_point.ingestion_methods[(data_type, ingestion_type)](**ingestion_args)
 
             for ing_k, ing_v in ingestion_args.items():
-                if ing_k not in new_data.columns:
+                if ing_k.upper() not in new_data.columns.str.upper():
                     new_data[ing_k] = ing_v
 
             if data_name in self.data:

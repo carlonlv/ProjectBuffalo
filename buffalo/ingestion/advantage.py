@@ -69,13 +69,19 @@ class AdvantageStockGrepper:
         Check the retuned dataframe and catch and raise error if detected.
         """
         if isinstance(ingested_result, pd.DataFrame):
-            if 'Error Message' in ingested_result.columns:
-                msg = ingested_result['Error Message'].iloc[0]
-            elif 'Note' in ingested_result.columns:
-                msg = ingested_result['Note'].iloc[0]
-        else:
-            msg = None
-        if isinstance(ingested_result, dict) and any([x in ingested_result for x in ['Error Message', 'Note']]):
+            if len(ingested_result.index) == 0:
+                warnings.warn(f'Ingestion results from {url} in 0 rows.')
+                return
+
+            if isinstance(ingested_result.iloc[0,0], str) and any([x in ingested_result.iloc[0,0]for x in ['Error Message', 'Note']]):
+                msg = ingested_result.iloc[0,0]
+            else:
+                msg = None
+        elif isinstance(ingested_result, dict) and any([x in ingested_result for x in ['Error Message', 'Note']]):
+            if len(ingested_result) == 0:
+                warnings.warn(f'Ingestion results from {url} in 0 rows.')
+                return
+
             if 'Error Message' in ingested_result:
                 msg = ingested_result['Error Message']
             elif 'Note' in ingested_result:
@@ -91,10 +97,7 @@ class AdvantageStockGrepper:
                 raise ConnectionRefusedError(f'Premium api key needed from {url}.')
             elif 'This API function' in msg:
                 raise ValueError(f'Invalid function passed from {url}')
-
-        if len(ingested_result) == 0:
-            warnings.warn('Ingestion results in 0 rows.')
-
+            
     def stock_download(
             self,
             symbol: str,
@@ -161,10 +164,10 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = response.json()
+        self._check_args(data, url)
         if len(data) == 0:
             return pd.DataFrame(columns=schema)
         result = pd.json_normalize(data)
-        self._check_args(result, url)
         return result
 
     def forex_download(
@@ -277,10 +280,10 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = response.json()
+        self._check_args(data, url)
         if len(data) == 0:
             return pd.DataFrame(columns=schema)
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
-        self._check_args(result, url)
         return result
 
     def econ_download(
@@ -327,15 +330,15 @@ class AdvantageStockGrepper:
             function = function,
             maturity = maturity,
             interval = interval,
-            datatype = 'csv',
+            datatype = 'json',
             apikey = self._api_key)
 
         response = requests.get(url, timeout=10)
         data = response.json()
+        self._check_args(data, url)
         if len(data) == 0:
             return pd.DataFrame(columns=schema)
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
-        self._check_args(result, url)
         return result
 
     def currency_list_download(self, currency: Literal['physical', 'digital']='physical'):
@@ -423,6 +426,7 @@ class AdvantageStockGrepper:
 
         response = requests.get(url, timeout=10)
         data = response.json()
+        self._check_args(data, url)
         if len(data) == 0:
             return pd.DataFrame(columns=schema)
 
@@ -476,9 +480,8 @@ class AdvantageStockGrepper:
 
             data = pd.read_csv(url)
         else:
-            if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS']:
-                schema = ['symbol',
-                          'fiscalDateEnding',
+            if function == 'INCOME_STATE_MENT':
+                schema = ['fiscalDateEnding',
                           'reportedCurrency',
                           'grossProfit',
                           'totalRevenue',
@@ -493,7 +496,7 @@ class AdvantageStockGrepper:
                           'interestIncome',
                           'interestExpense',
                           'nonInterestIncome',
-                          'otherNonOperatingIncome',
+                          'otherNonOperatingIncome'
                           'depreciation',
                           'depreciationAndAmortization',
                           'incomeBeforeTax',
@@ -504,7 +507,80 @@ class AdvantageStockGrepper:
                           'ebit',
                           'ebitda',
                           'netIncome',
+                          'symbol',
                           'freq']
+            elif function == 'BALANCE_SHEET':
+                schema = ['fiscalDateEnding',
+                          'reportedCurrency',
+                          'totalAssets',
+                          'totalCurrentAssets',
+                          'cashAndCashEquivalentsAtCarryingValue',
+                          'cashAndShortTermInvestments',
+                          'inventory',
+                          'currentNetReceivables',
+                          'totalNonCurrentAssets',
+                          'propertyPlantEquipment',
+                          'accumulatedDepreciationAmortizationPPE',
+                          'intangibleAssets',
+                          'intangibleAssetsExcludingGoodwill',
+                          'goodwill',
+                          'investments',
+                          'longTermInvestments',
+                          'shortTermInvestments',
+                          'otherCurrentAssets',
+                          'otherNonCurrentAssets',
+                          'totalLiabilities',
+                          'totalCurrentLiabilities',
+                          'currentAccountsPayable',
+                          'deferredRevenue',
+                          'currentDebt',
+                          'shortTermDebt',
+                          'totalNonCurrentLiabilities',
+                          'capitalLeaseObligations',
+                          'longTermDebt',
+                          'currentLongTermDebt',
+                          'longTermDebtNoncurrent',
+                          'shortLongTermDebtTotal',
+                          'otherCurrentLiabilities',
+                          'otherNonCurrentLiabilities',
+                          'totalShareholderEquity',
+                          'treasuryStock',
+                          'retainedEarnings',
+                          'commonStock',
+                          'commonStockSharesOutstanding',
+                          'symbol',
+                          'freq']
+            elif function == 'CASH_FLOW':
+                schema = ['fiscalDateEnding',
+                          'reportedCurrency',
+                          'operatingCashflow',
+                          'paymentsForOperatingActivities',
+                          'proceedsFromOperatingActivities',
+                          'changeInOperatingLiabilities',
+                          'changeInOperatingAssets',
+                          'depreciationDepletionAndAmortization',
+                          'capitalExpenditures',
+                          'changeInReceivables',
+                          'changeInInventory',
+                          'profitLoss',
+                          'cashflowFromInvestment',
+                          'cashflowFromFinancing',
+                          'proceedsFromRepaymentsOfShortTermDebt',
+                          'paymentsForRepurchaseOfCommonStock', 'paymentsForRepurchaseOfEquity',
+                          'paymentsForRepurchaseOfPreferredStock', 'dividendPayout',
+                          'dividendPayoutCommonStock', 'dividendPayoutPreferredStock',
+                          'proceedsFromIssuanceOfCommonStock',
+                          'proceedsFromIssuanceOfLongTermDebtAndCapitalSecuritiesNet',
+                          'proceedsFromIssuanceOfPreferredStock',
+                          'proceedsFromRepurchaseOfEquity',
+                          'proceedsFromSaleOfTreasuryStock',
+                          'changeInCashAndCashEquivalents',
+                          'changeInExchangeRate',
+                          'netIncome',
+                          'symbol',
+                          'freq']
+            elif function == 'EARNINGS':
+                schema = ['fiscalDateEnding', 'reportedEPS', 'symbol', 'freq', 'reportedDate', 'estimatedEPS', 'surprise', 'surprisePercentage']
             else:
                 schema = ['Symbol',
                           'AssetType',
@@ -553,20 +629,29 @@ class AdvantageStockGrepper:
                           'DividendDate',
                           'ExDividendDate']
 
+            url = self._construct_url(
+                function = function,
+                symbol = symbol,
+                apikey = self._api_key)
+
             response = requests.get(url, timeout=10)
             data = response.json()
-            if len(data) == 0:
-                return pd.DataFrame(columns=schema)
 
         self._check_args(data, url)
 
         if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW']:
+            if len(data) == 0:
+                return pd.DataFrame(columns=schema)
             annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
             result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         elif function in ['OVERVIEW']:
+            if len(data) == 0:
+                return pd.DataFrame(columns=schema)
             result = pd.json_normalize(data)
         elif function in ['EARNINGS']:
+            if len(data) == 0:
+                return pd.DataFrame(columns=schema)
             annual_data = pd.json_normalize(data, record_path='annualEarnings', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyEarnings', meta='symbol').assign(freq = 'quarterly')
             result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
