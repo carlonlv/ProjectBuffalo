@@ -97,7 +97,7 @@ class AdvantageStockGrepper:
                 raise ConnectionRefusedError(f'Premium api key needed from {url}.')
             elif 'This API function' in msg:
                 raise ValueError(f'Invalid function passed from {url}')
-            
+
     def stock_download(
             self,
             symbol: str,
@@ -995,18 +995,17 @@ class AdvantageStockGrepper:
         :param symbol: The name of the token of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200). Only used when function is CMO.
-        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Only used when function is CMO.
+        :param series_type: The desired price type in the time series. Four types are supported: close, open, high, low. Used when function is CMO, HT_TRENDLINE, HT_SINE, HT_TRENDMODE, HT_DCPERIOD, HT_DCPHASE, HT_PHASOR.
         :param timeperiod1: The first time period for the indicator. Positive integers are accepted. By default, timeperiod1=7. Only used when function is ULTOSC.
         :param timeperiod2: The second time period for the indicator. Positive integers are accepted. By default, timeperiod2=14. Only used when function is ULTOSC.
         :param timeperiod3: The third time period for the indicator. Positive integers are accepted. By default, timeperiod3=28. Only used when function is ULTOSC.
         :return: Downloaded data frame.
         """
-        if series_type not in ['ULTOSC']:
+        if function not in ['ULTOSC']:
             timeperiod1 = None
             timeperiod2 = None
             timeperiod3 = None
-
-        if series_type not in ['CMO']:
+        else:
             series_type = None
             time_period = None
 
