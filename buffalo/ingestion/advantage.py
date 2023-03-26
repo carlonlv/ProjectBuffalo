@@ -689,7 +689,7 @@ class AdvantageStockGrepper:
                              'symbol', 'freq']
             elif function == 'EARNINGS':
                 schema = ['symbol', 'annualEarnings', 'quarterlyEarnings']
-                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage', 'symbol', 'freq']
+                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage']
             else:
                 schema = ['Symbol', 'AssetType', 'Name', 'Description', 'CIK', 'Exchange', 'Currency', 'Country', 'Sector', 'Industry', 'Address',
                           'FiscalYearEnd', 'LatestQuarter', 'MarketCapitalization', 'EBITDA', 'PERatio', 'PEGRatio', 'BookValue', 'DividendPerShare', 'DividendYield',
