@@ -767,10 +767,9 @@ class AdvantageStockGrepper:
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
         if date is None:
-            result.index = pd.Index([pd.Timestamp.now().date()])
+            result.index = pd.Index([pd.Timestamp.now().date()] * len(result.index))
         else:
-            result.index = pd.Index([pd.Timestamp(date)])
-        result = result.drop(columns='time')
+            result.index = pd.Index([pd.Timestamp(date)] * len(result.index))
         self._check_schema(result, url, to_schema)
         return result
 
