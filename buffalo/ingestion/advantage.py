@@ -3,13 +3,15 @@ This module provide api access to Alpha-advantage api.
 """
 
 import warnings
-from typing import Callable, Dict, Literal, Optional, Tuple, Union
+from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import pandas as pd
 import requests
+from pytz import timezone
 
-from ..utility import concat_list, PositiveInt, PositiveFlt
+from ..utility import PositiveFlt, PositiveInt, concat_list
 from . import configuration, enum
+
 
 class AdvantageStockGrepper:
     """
@@ -64,9 +66,33 @@ class AdvantageStockGrepper:
             lst.append(f'{key}={value}')
         return self.url_base + '&'.join(lst)
 
+    def _check_schema(self, ingested_result: Union[pd.DataFrame, dict], url: str, expected_schema: Optional[List[str]]):
+        """
+        Check the retuned dataframe on matching the schema and catch and raise error if detected.
+
+        :param ingested_result: The downloaded dataframe or dictionary.
+        :param url: The orginal url where data comes from.
+        :param expected_schema: The expected list of strings for the schema.
+        """
+        if expected_schema is not None:
+            if isinstance(ingested_result, pd.DataFrame):
+                actual_schema = ingested_result.columns
+            elif isinstance(ingested_result, dict):
+                actual_schema = ingested_result.keys()
+            else:
+                actual_schema = None
+            if actual_schema is not None and set(actual_schema) != set(expected_schema):
+                if not set(actual_schema).issubset(set(expected_schema)):
+                    raise KeyError(f'Ingestion is not a subset of expected schema from {url}. (Expected: {concat_list(expected_schema)} Actual: {concat_list({ingested_result.columns})})')
+                else:
+                    warnings.warn(f'Ingestion deviates from expected schema from {url}. Missing keys: {concat_list(set(expected_schema) - set(actual_schema))}.')
+
     def _check_args(self, ingested_result: Union[pd.DataFrame, dict], url: str):
         """
         Check the retuned dataframe and catch and raise error if detected.
+
+        :param ingested_result: The downloaded dataframe or dictionary.
+        :param url: The orginal url where data comes from.
         """
         if isinstance(ingested_result, pd.DataFrame):
             if len(ingested_result.index) == 0:
@@ -115,13 +141,23 @@ class AdvantageStockGrepper:
         """
         if interval in ['daily', 'weekly', 'monthly']:
             function = 'TIME_SERIES_' + interval.upper()
+            interval = None
+            if adjusted:
+                function += '_ADJUSTED'
+                adjusted = None
+                if function == 'TIME_SERIES_DAILY_ADJUSTED':
+                    schema = ['timestamp', 'open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient']
+                    to_schema = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient']
+                else:
+                    schema = ['timestamp', 'open', 'high', 'low', 'close', 'adjusted close', 'volume', 'dividend amount']
+                    to_schema = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount']
+            else:
+                schema = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                to_schema = ['open', 'high', 'low', 'close', 'volume']
         else:
             function = 'TIME_SERIES_INTRADAY_EXTENDED'
-
-        if adjusted and interval in ['daily', 'weekly', 'monthly']:
-            function += '_ADJUSTED'
-            adjusted = None
-            interval = None
+            schema = ['time', 'open', 'high', 'low', 'close', 'volume']
+            to_schema = ['open', 'high', 'low', 'close', 'volume']
 
         url = self._construct_url(
             function = function,
@@ -134,6 +170,18 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+        ## Postprocessing
+        if 'time' in result.columns:
+            result.index = pd.to_datetime(result['time'])
+            result = result.drop(columns='time')
+        if 'timestamp' in result.columns:
+            result.index = pd.to_datetime(result['timestamp'])
+            result = result.drop(columns='timestamp')
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        self._check_schema(result, url, to_schema)
         return result
 
     def currency_exchange_download(
@@ -161,13 +209,22 @@ class AdvantageStockGrepper:
                   'Realtime Currency Exchange Rate.7. Time Zone',
                   'Realtime Currency Exchange Rate.8. Bid Price',
                   'Realtime Currency Exchange Rate.9. Ask Price']
+        to_schema = ['from_currency_code', 'from_currency_name', 'to_currency_code', 'to_currency_name', 'exchange_rate', 'bid_price', 'ask_price']
 
         response = requests.get(url, timeout=10)
         data = response.json()
         self._check_args(data, url)
+        self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=schema)
+            return pd.DataFrame(columns=to_schema)
         result = pd.json_normalize(data)
+        result.index = pd.to_datetime(result['Realtime Currency Exchange Rate.6. Last Refreshed'])
+        result.index = result.index.tz_localize(timezone(result['Realtime Currency Exchange Rate.7. Time Zone'].iloc[0]))
+        result = result.drop(columns=['Realtime Currency Exchange Rate.6. Last Refreshed', 'Realtime Currency Exchange Rate.7. Time Zone'])
+        result.columns = result.columns.str.replace(r'Realtime Currency Exchange Rate\.\d+\.\s', '', regex=True)
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def forex_download(
@@ -176,7 +233,7 @@ class AdvantageStockGrepper:
             to_symbol: str,
             interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']) -> pd.DataFrame:
         """
-        This API returns intraday/daily/weekly/montly time series (timestamp, open, high, low, close) of the FX currency pair specified, updated realtime.
+        This API returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close) of the FX currency pair specified, updated realtime.
 
         :param from_symbol: A three-letter symbol from the forex currency list. For example: from_symbol=EUR
         :param to_symbol: A three-letter symbol from the forex currency list. For example: to_symbol=USD
@@ -194,6 +251,9 @@ class AdvantageStockGrepper:
         else:
             function = 'FX_INTRADAY'
 
+        schema = ['timestamp', 'open', 'high', 'low', 'close']
+        to_schema = ['open', 'high', 'low', 'close']
+
         url = self._construct_url(
             function = function,
             from_symbol = from_symbol,
@@ -205,6 +265,13 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema)
+        result.index = pd.to_datetime(result['timestamp'])
+        result = result.drop(columns='timestamp')
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        self._check_schema(result, url, to_schema)
         return result
 
     def crypto_exchange_download(
@@ -224,9 +291,20 @@ class AdvantageStockGrepper:
             function = 'DIGITAL_CURRENCY' + interval.upper()
             interval = None
             outputsize = None
+            schema = ['timestamp',
+                      f'open ({physical_symbol})', f'high ({physical_symbol})', f'low ({physical_symbol})', f'close ({physical_symbol})',
+                      'open (USD)', 'high (USD)', 'low (USD)', 'close (USD)',
+                      'volume',
+                      'market cap (USD)']
+            to_schema = ['open', 'high', 'low', 'close',
+                         'open_usd', 'high_usd', 'low_usd', 'close_usd',
+                         'volume',
+                         'market_cap_usd']
         else:
             function = 'CRYPTO_INTRADAY'
             outputsize = 'full'
+            schema = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+            to_schema = ['open', 'high', 'low', 'close', 'volume']
 
         url = self._construct_url(
             function = function,
@@ -239,6 +317,15 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema)
+        result.index = pd.to_datetime(result['timestamp'])
+        result = result.drop(columns='timestamp')
+        result.columns = result.columns.str.replace(f' ({physical_symbol})', '', regex=False)
+        result.columns = result.columns.str.replace(' (USD)', '_usd', regex=False)
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        self._check_schema(result, url, to_schema)
         return result
 
     def commodity_price_download(
@@ -271,6 +358,7 @@ class AdvantageStockGrepper:
             assert interval in acceptable_intervals, f'interval needs to be one of {concat_list(acceptable_intervals)}.'
 
         schema = ['name', 'interval', 'unit', 'date', 'value']
+        to_schema = ['name', 'interval', 'unit', 'value']
 
         url = self._construct_url(
             function = commodity,
@@ -281,9 +369,13 @@ class AdvantageStockGrepper:
         response = requests.get(url, timeout=10)
         data = response.json()
         self._check_args(data, url)
+        self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=schema)
+            return pd.DataFrame(columns=to_schema)
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
+        result.index = pd.to_datetime(result['date'])
+        result = result.drop(columns='date')
+        self._check_schema(result, url, to_schema)
         return result
 
     def econ_download(
@@ -325,6 +417,7 @@ class AdvantageStockGrepper:
             maturity = None
 
         schema = ['name', 'interval', 'unit', 'date', 'value']
+        to_schema = ['name', 'interval', 'unit', 'value']
 
         url = self._construct_url(
             function = function,
@@ -336,9 +429,13 @@ class AdvantageStockGrepper:
         response = requests.get(url, timeout=10)
         data = response.json()
         self._check_args(data, url)
+        self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=schema)
+            return pd.DataFrame(columns=to_schema)
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
+        result.index = pd.to_datetime(result['date'])
+        result = result.drop(columns='date')
+        self._check_schema(result, url, to_schema)
         return result
 
     def currency_list_download(self, currency: Literal['physical', 'digital']='physical'):
@@ -352,8 +449,13 @@ class AdvantageStockGrepper:
         else:
             url = 'https://www.alphavantage.co/digital_currency_list/'
 
+        schema = ['currency code', 'currency name']
         result = pd.read_csv(url)
+        if len(result) == 0:
+            return pd.DataFrame(columns=schema)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.index = pd.Timestamp.now()
         return result
 
     def market_news_sentiment_download(
@@ -393,6 +495,27 @@ class AdvantageStockGrepper:
         """
         function = 'NEWS_SENTIMENT'
 
+        schema = ['item', 'sentiment_score_definition', 'relevance_score_definition', 'feed']
+        to_schema = ['items',
+                     'sentiment_score_definition',
+                     'relevance_score_definition',
+                     'title',
+                     'url',
+                     'authors',
+                     'summary',
+                     'banner_image',
+                     'source',
+                     'category_within_source',
+                     'source_domain',
+                     'topic',
+                     'topic_relevance_score',
+                     'overall_sentiment_score',
+                     'overall_sentiment_label',
+                     'ticker_relevance_score',
+                     'relevance_score',
+                     'ticker_sentiment_score',
+                     'ticker_sentiment_label']
+
         url = self._construct_url(
             function = function,
             tickers = tickers,
@@ -403,32 +526,12 @@ class AdvantageStockGrepper:
             limit = limit,
             apikey = self._api_key)
 
-        schema = ['items',
-                  'sentiment_score_definition',
-                  'relevance_score_definition',
-                  'title',
-                  'url',
-                  'time_published',
-                  'authors',
-                  'summary',
-                  'banner_image',
-                  'source',
-                  'category_within_source',
-                  'source_domain',
-                  'topic',
-                  'relevance_score',
-                  'overall_sentiment_score',
-                  'overall_sentiment_label',
-                  'ticker',
-                  'relevance_score',
-                  'ticker_sentiment_score',
-                  'ticker_sentiment_label']
-
         response = requests.get(url, timeout=10)
         data = response.json()
         self._check_args(data, url)
+        self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=schema)
+            return pd.DataFrame(columns=to_schema)
 
         result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
         result = result.reset_index(drop=False)
@@ -444,15 +547,16 @@ class AdvantageStockGrepper:
         ticker_lst = pd.concat(ticker_lst)
 
         result = result.drop(columns=['topics', 'ticker_sentiment'])
-
+        result.index = pd.to_datetime(result['time_published'])
+        result = result.drop(columns='time_published')
         result = result.merge(topic_lst).merge(ticker_lst)
-
+        self._check_schema(data, url, to_schema)
         return result
 
     def company_info_download(
         self,
         function: Literal['OVERVIEW', 'INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW', 'EARNINGS', 'EARNINGS_CALENDAR'],
-        symbol: str,
+        symbol: Optional[str],
         horizon: Optional[Literal['3month', '6month', '12month']]='3month') -> pd.DataFrame:
         """
         This method returns the company information, financial ratios, and other key metrics for the equity specified. Data is generally refreshed on the same day a company reports its latest earnings and financials.
@@ -464,13 +568,16 @@ class AdvantageStockGrepper:
             4. CASH_FLOW: The annual and quarterly cash flow for the company of interest, with normalized fields mapped to GAAP and IFRS taxonomies of the SEC. Data is generally refreshed on the same day a company reports its latest earnings and financials.
             5. EARNINGS: The annual and quarterly earnings (EPS) for the company of interest. Quarterly data also includes analyst estimates and surprise metrics.
             6. EARNINGS_CALENDAR: A list of company earnings expected in the next 3, 6, or 12 months.
-        :param symbol: The symbol of the token of your choice. For example: symbol=IBM.
+        :param symbol: The symbol of the token of your choice. For example: symbol=IBM. symbol is optional when function is EARNINGS_CALENDAR.
         :param horizon: By default, horizon=3month and the API will return a list of expected company earnings in the next 3 months. You may set horizon=6month or horizon=12month to query the earnings scheduled for the next 6 months or 12 months, respectively. Only used when function is EARNINGS_CALENDAR.
         :return: Downloaded data frame.
         """
         if function == 'EARNINGS_CALENDAR':
             acceptable_horizon = [None, '3month', '6month', '12month']
             assert horizon in acceptable_horizon, f'horizon needs to be one of {concat_list(acceptable_horizon)}.'
+
+            schema = ['symbol', 'name', 'reportDate', 'fiscalDateEnding', 'estimate', 'currency']
+            to_schema = ['symbol', 'name', 'report_date', 'estimate', 'currency']
 
             url = self._construct_url(
                 function = function,
@@ -480,154 +587,119 @@ class AdvantageStockGrepper:
 
             data = pd.read_csv(url)
         else:
-            if function == 'INCOME_STATE_MENT':
-                schema = ['fiscalDateEnding',
-                          'reportedCurrency',
-                          'grossProfit',
-                          'totalRevenue',
-                          'costOfRevenue',
-                          'costofGoodsAndServicesSold',
-                          'operatingIncome',
-                          'sellingGeneralAndAdministrative',
-                          'researchAndDevelopment',
-                          'operatingExpenses',
-                          'investmentIncomeNet',
-                          'netInterestIncome',
-                          'interestIncome',
-                          'interestExpense',
-                          'nonInterestIncome',
-                          'otherNonOperatingIncome'
-                          'depreciation',
-                          'depreciationAndAmortization',
-                          'incomeBeforeTax',
-                          'incomeTaxExpense',
-                          'interestAndDebtExpense',
-                          'netIncomeFromContinuingOperations',
-                          'comprehensiveIncomeNetOfTax',
-                          'ebit',
-                          'ebitda',
-                          'netIncome',
-                          'symbol',
-                          'freq']
+            horizon = None
+
+            if function == 'INCOME_STATEMENT':
+                schema = ['symbol', 'annualReports', 'quarterlyReports']
+                to_schema = ['reported_currency',
+                             'gross_profit',
+                             'total_revenue',
+                             'cost_of_revenue',
+                             'costof_goods_and_services_sold',
+                             'operating_income',
+                             'selling_general_and_administrative',
+                             'research_and_development',
+                             'operating_expenses',
+                             'investment_income_net',
+                             'net_interest_income',
+                             'interest_income',
+                             'interest_expense',
+                             'noninterest_income',
+                             'other_nonoperating_income',
+                             'depreciation',
+                             'depreciation_and_amortization',
+                             'income_before_tax',
+                             'income_tax_expense',
+                             'interest_and_debt_expense',
+                             'net_income_from_continuing_operations',
+                             'comprehensive_income_net_of_tax',
+                             'ebit',
+                             'ebitda',
+                             'net_income']
             elif function == 'BALANCE_SHEET':
-                schema = ['fiscalDateEnding',
-                          'reportedCurrency',
-                          'totalAssets',
-                          'totalCurrentAssets',
-                          'cashAndCashEquivalentsAtCarryingValue',
-                          'cashAndShortTermInvestments',
-                          'inventory',
-                          'currentNetReceivables',
-                          'totalNonCurrentAssets',
-                          'propertyPlantEquipment',
-                          'accumulatedDepreciationAmortizationPPE',
-                          'intangibleAssets',
-                          'intangibleAssetsExcludingGoodwill',
-                          'goodwill',
-                          'investments',
-                          'longTermInvestments',
-                          'shortTermInvestments',
-                          'otherCurrentAssets',
-                          'otherNonCurrentAssets',
-                          'totalLiabilities',
-                          'totalCurrentLiabilities',
-                          'currentAccountsPayable',
-                          'deferredRevenue',
-                          'currentDebt',
-                          'shortTermDebt',
-                          'totalNonCurrentLiabilities',
-                          'capitalLeaseObligations',
-                          'longTermDebt',
-                          'currentLongTermDebt',
-                          'longTermDebtNoncurrent',
-                          'shortLongTermDebtTotal',
-                          'otherCurrentLiabilities',
-                          'otherNonCurrentLiabilities',
-                          'totalShareholderEquity',
-                          'treasuryStock',
-                          'retainedEarnings',
-                          'commonStock',
-                          'commonStockSharesOutstanding',
-                          'symbol',
-                          'freq']
+                schema = ['symbol', 'annualReports', 'quarterlyReports']
+                to_schema = ['reported_currency',
+                             'total_assets',
+                             'total_current_assets',
+                             'cash_and_cash_equivalents_at_carrying_value',
+                             'cash_and_short_term_investments',
+                             'inventory',
+                             'current_net_receivables',
+                             'total_noncurrent_assets',
+                             'property_plant_equipment',
+                             'accumulated_depreciation_amortization_ppe',
+                             'intangible_assets',
+                             'intangible_assets_excluding_goodwill',
+                             'goodwill',
+                             'investments',
+                             'long_term_investments',
+                             'short_term_investments',
+                             'other_current_assets',
+                             'other_noncurrent_assets',
+                             'total_liabilities',
+                             'total_current_liabilities',
+                             'current_accounts_payable',
+                             'deferred_revenue',
+                             'current_debt',
+                             'short_term_debt',
+                             'total_noncurrent_liabilities',
+                             'capital_lease_obligations',
+                             'long_term_debt',
+                             'current_long_term_debt',
+                             'long_term_debt_noncurrent',
+                             'short_long_term_debt_total',
+                             'other_current_liabilities',
+                             'other_noncurrent_liabilities',
+                             'total_shareholder_equity',
+                             'treasury_stock',
+                             'retained_earnings',
+                             'common_stock',
+                             'common_stock_shares_outstanding']
             elif function == 'CASH_FLOW':
-                schema = ['fiscalDateEnding',
-                          'reportedCurrency',
-                          'operatingCashflow',
-                          'paymentsForOperatingActivities',
-                          'proceedsFromOperatingActivities',
-                          'changeInOperatingLiabilities',
-                          'changeInOperatingAssets',
-                          'depreciationDepletionAndAmortization',
-                          'capitalExpenditures',
-                          'changeInReceivables',
-                          'changeInInventory',
-                          'profitLoss',
-                          'cashflowFromInvestment',
-                          'cashflowFromFinancing',
-                          'proceedsFromRepaymentsOfShortTermDebt',
-                          'paymentsForRepurchaseOfCommonStock', 'paymentsForRepurchaseOfEquity',
-                          'paymentsForRepurchaseOfPreferredStock', 'dividendPayout',
-                          'dividendPayoutCommonStock', 'dividendPayoutPreferredStock',
-                          'proceedsFromIssuanceOfCommonStock',
-                          'proceedsFromIssuanceOfLongTermDebtAndCapitalSecuritiesNet',
-                          'proceedsFromIssuanceOfPreferredStock',
-                          'proceedsFromRepurchaseOfEquity',
-                          'proceedsFromSaleOfTreasuryStock',
-                          'changeInCashAndCashEquivalents',
-                          'changeInExchangeRate',
-                          'netIncome',
-                          'symbol',
-                          'freq']
+                schema = ['symbol', 'annualReports', 'quarterlyReports']
+                to_schema = ['reported_currency',
+                             'operating_cashflow',
+                             'payments_for_operating_activities',
+                             'proceeds_from_operating_activities',
+                             'change_in_operating_liabilities',
+                             'change_in_operating_assets',
+                             'depreciation_depletion_and_amortization',
+                             'capital_expenditures',
+                             'change_in_receivables',
+                             'change_in_inventory',
+                             'profit_loss',
+                             'cashflow_from_investment',
+                             'cashflow_from_financing',
+                             'proceeds_from_repayments_of_short_term_debt',
+                             'payments_for_repurchase_of_common_stock', 'payments_for_repurchase_of_equity',
+                             'payments_for_repurchase_of_preferred_stock', 'dividend_payout',
+                             'dividend_payout_common_stock',
+                             'dividend_payout_preferred_stock',
+                             'proceeds_from_issuance_of_common_stock',
+                             'proceeds_from_issuance_of_long_term_debt_and_capital_securities_net',
+                             'proceeds_from_issuance_of_preferred_stock',
+                             'proceeds_from_repurchase_of_equity',
+                             'proceeds_from_sale_of_treasury_stock',
+                             'change_in_cash_and_cash_equivalents',
+                             'change_in_exchange_rate',
+                             'net_income']
             elif function == 'EARNINGS':
-                schema = ['fiscalDateEnding', 'reportedEPS', 'symbol', 'freq', 'reportedDate', 'estimatedEPS', 'surprise', 'surprisePercentage']
+                schema = ['symbol', 'annualEarnings', 'quarterlyEarnings']
+                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage']
             else:
-                schema = ['Symbol',
-                          'AssetType',
-                          'Name',
-                          'Description',
-                          'CIK',
-                          'Exchange',
-                          'Currency',
-                          'Country',
-                          'Sector',
-                          'Industry',
-                          'Address',
-                          'FiscalYearEnd',
-                          'LatestQuarter',
-                          'MarketCapitalization',
-                          'EBITDA',
-                          'PERatio',
-                          'PEGRatio',
-                          'BookValue',
-                          'DividendPerShare',
-                          'DividendYield',
-                          'EPS',
-                          'RevenuePerShareTTM',
-                          'ProfitMargin',
-                          'OperatingMarginTTM',
-                          'ReturnOnAssetsTTM',
-                          'ReturnOnEquityTTM',
-                          'RevenueTTM',
-                          'GrossProfitTTM',
-                          'DilutedEPSTTM',
-                          'QuarterlyEarningsGrowthYOY',
-                          'QuarterlyRevenueGrowthYOY',
-                          'AnalystTargetPrice',
-                          'TrailingPE',
-                          'ForwardPE',
-                          'PriceToSalesRatioTTM',
-                          'PriceToBookRatio',
-                          'EVToRevenue',
-                          'EVToEBITDA',
-                          'Beta',
-                          '52WeekHigh',
-                          '52WeekLow',
-                          '50DayMovingAverage',
-                          '200DayMovingAverage',
-                          'SharesOutstanding',
-                          'DividendDate',
-                          'ExDividendDate']
+                schema = ['Symbol', 'AssetType', 'Name', 'Description', 'CIK', 'Exchange', 'Currency', 'Country', 'Sector', 'Industry', 'Address',
+                          'FiscalYearEnd', 'LatestQuarter', 'MarketCapitalization', 'EBITDA', 'PERatio', 'PEGRatio', 'BookValue', 'DividendPerShare', 'DividendYield',
+                          'EPS', 'RevenuePerShareTTM', 'ProfitMargin', 'OperatingMarginTTM', 'ReturnOnAssetsTTM', 'ReturnOnEquityTTM', 'RevenueTTM', 'GrossProfitTTM', 'DilutedEPSTTM',
+                          'QuarterlyEarningsGrowthYOY', 'QuarterlyRevenueGrowthYOY', 'AnalystTargetPrice', 'TrailingPE', 'ForwardPE',
+                          'PriceToSalesRatioTTM', 'PriceToBookRatio', 'EVToRevenue', 'EVToEBITDA', 'Beta', '52WeekHigh', '52WeekLow',
+                          '50DayMovingAverage', '200DayMovingAverage', 'SharesOutstanding', 'DividendDate', 'ExDividendDate']
+                to_schema = ['symbol', 'asset_type','name', 'description', 'cik', 'exchange', 'currency', 'country', 'sector', 'industry', 'address',
+                             'fiscal_year_end', 'latest_quarter', 'market_capitalization', 'ebitda', 'pe_ratio', 'peg_ratio', 'book_value',
+                             'dividend_per_share', 'dividend_yield', 'eps', 'revenue_per_share_ttm', 'profit_margin',
+                             'operating_margin_ttm', 'return_on_assets_ttm', 'return_on_equity_ttm', 'revenue_ttm', 'gross_profit_ttm', 'diluted_eps_ttm',
+                             'quarterly_earnings_growth_yoy', 'quarterly_revenue_growth_yoy', 'analyst_target_price',
+                             'trailing_pe', 'forward_pe', 'price_to_sales_ratio_ttm', 'price_to_book_ratio', 'ev_to_revenue', 'ev_to_ebitda', 'beta',
+                             '52_week_high', '52_week_low', '50_day_moving_average', '200_day_moving_average', 'shares_outstanding', 'dividend_date', 'ex_dividend_date']
 
             url = self._construct_url(
                 function = function,
@@ -638,26 +710,31 @@ class AdvantageStockGrepper:
             data = response.json()
 
         self._check_args(data, url)
-
+        self._check_schema(data, url, schema)
+        if len(data) == 0:
+            return pd.DataFrame(columns=to_schema)
         if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW']:
-            if len(data) == 0:
-                return pd.DataFrame(columns=schema)
             annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
             result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         elif function in ['OVERVIEW']:
-            if len(data) == 0:
-                return pd.DataFrame(columns=schema)
             result = pd.json_normalize(data)
         elif function in ['EARNINGS']:
-            if len(data) == 0:
-                return pd.DataFrame(columns=schema)
             annual_data = pd.json_normalize(data, record_path='annualEarnings', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyEarnings', meta='symbol').assign(freq = 'quarterly')
             result = pd.concat([annual_data, quarterly_data], axis=0).reset_index(drop=True)
         else: ## EARNINGS_CALENDAR
             result = data
 
+        if function != 'OVERVIEW':
+            result.index = pd.to_datetime(result['fiscalDateEnding'])
+            result = result.drop(columns='fiscalDateEnding')
+        else:
+            result.index = pd.Timestamp.now()
+        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
+        result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace('non_', 'non', regex=False)
+        self._check_schema(data, url, to_schema)
         return result
 
     def listing_info_download(
@@ -676,9 +753,15 @@ class AdvantageStockGrepper:
             date = date,
             state = state,
             apikey = self._api_key)
+        schema = ['symbol', 'name', 'exchange', 'assetType', 'ipoDate', 'delistingDate', 'status']
+        to_schema = ['symbol', 'name', 'exchange', 'asset_type', 'ipo_date', 'delisting_date', 'status']
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def ipo_calendar_download(self) -> pd.Timestamp:
@@ -690,9 +773,15 @@ class AdvantageStockGrepper:
         function = 'IPO_CALENDAR'
 
         url = self._construct_url(function = function, apikey = self._api_key)
+        schema = ['symbol', 'name', 'ipoDate', 'priceRangeLow', 'priceRangeHigh', 'currency', 'exchange']
+        to_schema = ['symbol', 'name', 'ipo_date', 'price_range_low', 'price_range_high', 'currency', 'exchange']
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def trend_indicator_download(
@@ -760,11 +849,17 @@ class AdvantageStockGrepper:
             nbdevdn = None
             matype = None
 
-        if function in ['MAMA']:
-            time_period = None
-
         if function in ['ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'ATR', 'NATR', 'MIDPRICE']:
             series_type = None
+    
+        if function in ['MAMA']:
+            time_period = None
+            schema = ['time', 'FAMA', 'MAMA']
+        else:
+            schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
 
         url = self._construct_url(
             function = function,
@@ -784,6 +879,9 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def momentum_indicator_download(
@@ -813,6 +911,11 @@ class AdvantageStockGrepper:
         """
         if function in ['WILLR', 'AROON', 'AROONOSC']:
             series_type = None
+        
+        schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
 
         url = self._construct_url(
             function = function,
@@ -825,6 +928,9 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def oscillator_indicator_download(
@@ -882,6 +988,11 @@ class AdvantageStockGrepper:
         if function in ['CCI', 'MFI']:
             series_type = None
 
+        schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
+
         url = self._construct_url(
             function = function,
             symbol = symbol,
@@ -901,6 +1012,9 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def volume_indicator_download(
@@ -928,6 +1042,11 @@ class AdvantageStockGrepper:
             fastperiod = None
             slowperiod = None
 
+        schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
+
         url = self._construct_url(
             function = function,
             symbol = symbol,
@@ -939,6 +1058,9 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def volatility_indicator_download(
@@ -958,6 +1080,11 @@ class AdvantageStockGrepper:
         :param time_period: Number of data points used to calculate each moving average value. Positive integers are accepted (e.g., time_period=60, time_period=200).
         :return: Downloaded data frame.
         """
+        schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
+
         url = self._construct_url(
             function = function,
             symbol = symbol,
@@ -968,6 +1095,9 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result
 
     def cycle_indicator_download(
@@ -1009,6 +1139,11 @@ class AdvantageStockGrepper:
             series_type = None
             time_period = None
 
+        schema = ['time', function]
+
+        to_schema = schema.remove('time')
+        to_schema = [x.lower() for x in to_schema]
+
         url = self._construct_url(
             function = function,
             symbol = symbol,
@@ -1023,4 +1158,7 @@ class AdvantageStockGrepper:
 
         result = pd.read_csv(url)
         self._check_args(result, url)
+        self._check_schema(result, url, schema)
+        result.columns = result.columns.str.lower()
+        self._check_schema(result, url, to_schema)
         return result

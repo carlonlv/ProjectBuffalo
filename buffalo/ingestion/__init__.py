@@ -76,7 +76,7 @@ class DataIngestion:
             new_data = target_end_point.ingestion_methods[(data_type, ingestion_type)](**ingestion_args)
 
             for ing_k, ing_v in ingestion_args.items():
-                if ing_k.upper() not in new_data.columns.str.upper():
+                if ing_k not in new_data.columns:
                     new_data[ing_k] = ing_v
 
             if data_name in self.data:
@@ -87,14 +87,17 @@ class DataIngestion:
         assert 'data_type' in args_df.columns and 'ingestion_type' in args_df.columns
 
         for i in tqdm(args_df.index):
-            retries = 0
-            try:
-                _ingestion_from_web(**args_df.loc[i].to_dict())
-            except ConnectionRefusedError:
-                if retries > max_retries:
-                    raise
-                retries += 1
-                time.sleep(wait_time)
+            for retries in range(max_retries):
+                try:
+                    _ingestion_from_web(**args_df.loc[i].to_dict())
+                    break
+                except ConnectionRefusedError as connection_exception:
+                    time.sleep(wait_time)
+                    if retries == max_retries - 1:
+                        warnings.warn(connection_exception)
+                except (PermissionError, KeyError, ValueError) as other_exception:
+                    warnings.warn(other_exception)
+                    break
 
     def load_data(
         self,
@@ -129,6 +132,9 @@ class DataIngestion:
         """
         if data_names is None:
             write_data = self.data
+        elif isinstance(data_names, str):
+            if data_names in self.data:
+                write_data = {data_names: self.data[data_names]}
         else:
             write_data = {k: self.data[k] for k in data_names if k in self.data}
         create_parent_directory(file_path)
