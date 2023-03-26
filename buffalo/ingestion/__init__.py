@@ -80,7 +80,7 @@ class DataIngestion:
                     new_data[ing_k] = ing_v
 
             if data_name in self.data:
-                self.data[data_name] = pd.concat([self.data[data_name], new_data], axis=0).reset_index(drop=True)
+                self.data[data_name] = pd.concat([self.data[data_name], new_data], axis=0)
             else:
                 self.data[data_name] = new_data
 
@@ -94,22 +94,24 @@ class DataIngestion:
                 except ConnectionRefusedError as connection_exception:
                     time.sleep(wait_time)
                     if retries == max_retries - 1:
-                        warnings.warn(connection_exception)
+                        warnings.warn(str(connection_exception))
                 except (PermissionError, KeyError, ValueError) as other_exception:
-                    warnings.warn(other_exception)
+                    warnings.warn(str(other_exception))
                     break
 
     def load_data(
         self,
         file_path: str,
         table_names: Optional[List[str]]=None,
-        query_template: str='SELECT * FROM {table}'):
+        query_template: str='SELECT * FROM {table}',
+        load_index_from: Optional[str]='time'):
         """
         Load data from file.
 
         :param file_path: The file path of the write file.
         :param table_names: The names of tables to be read to file.
         :param query_template: The template to be used for reading. Format {table} is used for table name.
+        :param load_index_from: Convert this column to Timestamp datatype and store as index.
         """
         conn = sqlite3.connect(file_path)
         if table_names is None:
@@ -117,18 +119,20 @@ class DataIngestion:
         else:
             read_data = pd.Series(table_names)
         for tbl in read_data:
-            self.data[tbl] = pd.read_sql(query_template.format(table=tbl), conn)
+            self.data[tbl] = pd.read_sql(query_template.format(table=tbl), conn, index_col=load_index_from, parse_dates=load_index_from)
         conn.close()
 
     def store_data(
         self,
         file_path: str,
-        data_names: Optional[List[str]]=None):
+        data_names: Optional[List[str]]=None,
+        store_index_to: Optional[str]='time'):
         """
         Write data to file. This function will replace tables if they already exists.
 
         :param file_path: The file path of the write file.
         :param data_names: The names of data to be written to file.
+        :param store_index_to: Write index to column.
         """
         if data_names is None:
             write_data = self.data
@@ -140,5 +144,5 @@ class DataIngestion:
         create_parent_directory(file_path)
         conn = sqlite3.connect(file_path)
         for key, val in write_data.items():
-            val.to_sql(key, conn, if_exists='replace', index=False)
+            val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
         conn.close()

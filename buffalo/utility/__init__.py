@@ -158,3 +158,15 @@ def create_and_dodge_new_name(lst: List[str], prefix: str, suffix: str) -> str:
     else:
         next_num = max(lst) + 1
         return prefix + str(next_num) + suffix
+
+def split_string_to_words(concat_words: str) -> List[str]:
+    """
+    Split concatenated string of words into the original list of words.
+
+    :param concat_words: For example, a string like VectorFormOfSS
+    :return: Splitted list of words, ['Vector', 'Form', 'Of', 'SS'].
+    """
+    concat_words = re.sub(r'(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])', '_', concat_words)
+    words = concat_words.split('_')
+    words = [w if w.isupper() else re.sub(r'(?<!^)(?=[A-Z])', '_', w) for w in words]
+    return words

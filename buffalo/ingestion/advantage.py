@@ -9,7 +9,8 @@ import pandas as pd
 import requests
 from pytz import timezone
 
-from ..utility import PositiveFlt, PositiveInt, concat_list
+from ..utility import (PositiveFlt, PositiveInt, concat_list,
+                       split_string_to_words)
 from . import configuration, enum
 
 
@@ -83,7 +84,7 @@ class AdvantageStockGrepper:
                 actual_schema = None
             if actual_schema is not None and set(actual_schema) != set(expected_schema):
                 if not set(actual_schema).issubset(set(expected_schema)):
-                    raise KeyError(f'Ingestion is not a subset of expected schema from {url}. (Expected: {concat_list(expected_schema)} Actual: {concat_list({ingested_result.columns})})')
+                    raise KeyError(f'Ingestion is not a subset of expected schema from {url}. (Expected: {concat_list(expected_schema)} Actual: {concat_list(actual_schema)})')
                 else:
                     warnings.warn(f'Ingestion deviates from expected schema from {url}. Missing keys: {concat_list(set(expected_schema) - set(actual_schema))}.')
 
@@ -455,7 +456,7 @@ class AdvantageStockGrepper:
             return pd.DataFrame(columns=schema)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
-        result.index = pd.Timestamp.now()
+        result.index = pd.Index([pd.Timestamp.now()])
         return result
 
     def market_news_sentiment_download(
@@ -615,7 +616,8 @@ class AdvantageStockGrepper:
                              'comprehensive_income_net_of_tax',
                              'ebit',
                              'ebitda',
-                             'net_income']
+                             'net_income',
+                             'symbol', 'freq']
             elif function == 'BALANCE_SHEET':
                 schema = ['symbol', 'annualReports', 'quarterlyReports']
                 to_schema = ['reported_currency',
@@ -654,7 +656,8 @@ class AdvantageStockGrepper:
                              'treasury_stock',
                              'retained_earnings',
                              'common_stock',
-                             'common_stock_shares_outstanding']
+                             'common_stock_shares_outstanding',
+                             'symbol', 'freq']
             elif function == 'CASH_FLOW':
                 schema = ['symbol', 'annualReports', 'quarterlyReports']
                 to_schema = ['reported_currency',
@@ -682,10 +685,11 @@ class AdvantageStockGrepper:
                              'proceeds_from_sale_of_treasury_stock',
                              'change_in_cash_and_cash_equivalents',
                              'change_in_exchange_rate',
-                             'net_income']
+                             'net_income',
+                             'symbol', 'freq']
             elif function == 'EARNINGS':
                 schema = ['symbol', 'annualEarnings', 'quarterlyEarnings']
-                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage']
+                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage', 'symbol', 'freq']
             else:
                 schema = ['Symbol', 'AssetType', 'Name', 'Description', 'CIK', 'Exchange', 'Currency', 'Country', 'Sector', 'Industry', 'Address',
                           'FiscalYearEnd', 'LatestQuarter', 'MarketCapitalization', 'EBITDA', 'PERatio', 'PEGRatio', 'BookValue', 'DividendPerShare', 'DividendYield',
@@ -730,11 +734,11 @@ class AdvantageStockGrepper:
             result.index = pd.to_datetime(result['fiscalDateEnding'])
             result = result.drop(columns='fiscalDateEnding')
         else:
-            result.index = pd.Timestamp.now()
-        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
-        result.columns = result.columns.str.lower()
+            result.index = pd.Index([pd.Timestamp.now()])
+        result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
+        result = result.rename(columns={'diluted_epsttm': 'diluted_eps_ttm'}) ## special case that helper function cannot identify
         result.columns = result.columns.str.replace('non_', 'non', regex=False)
-        self._check_schema(data, url, to_schema)
+        self._check_schema(result, url, to_schema)
         return result
 
     def listing_info_download(
@@ -759,7 +763,7 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
-        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
+        result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
         self._check_schema(result, url, to_schema)
         return result
@@ -779,7 +783,7 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
-        result.columns = result.columns.str.replace(r'(?<!^)(?=[A-Z][a-z])(?<![A-Z][A-Z][a-z])', '_', regex=True)
+        result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
         self._check_schema(result, url, to_schema)
         return result
