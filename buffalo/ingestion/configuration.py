@@ -11,11 +11,8 @@ from . import enum
 class Configuration:
     """
     This is the class that user configures the settings to download data.
-    https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY_EXTENDED&symbol=MSFT&interval=15min&slice=year1month1&apikey=2rrNROO0beX90lPH7ixQOp0mT_9SwF0d
     """
-    storage_folder=r'../__cached_data'
     api_keys={enum.API.ADVANTAGE: r'2rrNROO0beX90lPH7ixQOp0mT_9SwF0d'}
-    watched_tickers=['IBM', 'MSFT']
 
     @staticmethod
     def update_api_keys(api: enum.API, api_key: str):
@@ -46,7 +43,5 @@ class Configuration:
         Print the current setting.
         """
         print({
-            "storage_folder": Configuration.storage_folder,
-            "api_keys": Configuration.api_keys,
-            "watched_tickers": Configuration.watched_tickers
+            "api_keys": Configuration.api_keys
         })
