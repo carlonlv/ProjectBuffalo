@@ -417,7 +417,7 @@ class AdvantageStockGrepper:
         if function != 'TREASURY_YIELD':
             maturity = None
 
-        schema = ['name', 'interval', 'unit', 'date', 'value']
+        schema = ['name', 'interval', 'unit', 'data']
         to_schema = ['name', 'interval', 'unit', 'value']
 
         url = self._construct_url(
@@ -734,7 +734,7 @@ class AdvantageStockGrepper:
             result.index = pd.to_datetime(result['fiscalDateEnding'])
             result = result.drop(columns='fiscalDateEnding')
         else:
-            result.index = pd.Index([pd.Timestamp.now()])
+            result.index = pd.Index([pd.Timestamp.now().date()])
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result = result.rename(columns={'diluted_epsttm': 'diluted_eps_ttm'}) ## special case that helper function cannot identify
         result.columns = result.columns.str.replace('non_', 'non', regex=False)
@@ -765,6 +765,11 @@ class AdvantageStockGrepper:
         self._check_schema(result, url, schema)
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
+        if date is None:
+            result.index = pd.Index([pd.Timestamp.now().date()])
+        else:
+            result.index = pd.Index([pd.Timestamp(date)])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 
@@ -855,15 +860,14 @@ class AdvantageStockGrepper:
 
         if function in ['ADX', 'ADXR', 'DX', 'MINUS_DI', 'PLUS_DI', 'MINUS_DM', 'PLUS_DM', 'ATR', 'NATR', 'MIDPRICE']:
             series_type = None
-    
+
         if function in ['MAMA']:
             time_period = None
             schema = ['time', 'FAMA', 'MAMA']
+            to_schema = ['fama', 'mama']
         else:
             schema = ['time', function]
-
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+            to_schema = [function.lower()]
 
         url = self._construct_url(
             function = function,
@@ -885,6 +889,7 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 

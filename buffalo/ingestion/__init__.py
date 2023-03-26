@@ -85,7 +85,7 @@ class DataIngestion:
                 self.data[data_name] = new_data
 
         assert 'data_type' in args_df.columns and 'ingestion_type' in args_df.columns
-
+        args_df = args_df.reset_index(drop=True)
         for i in tqdm(args_df.index):
             for retries in range(max_retries):
                 try:
