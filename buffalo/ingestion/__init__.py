@@ -125,7 +125,7 @@ class DataIngestion:
     def store_data(
         self,
         file_path: str,
-        data_names: Optional[List[str]]=None,
+        data_names: Optional[Union[List[str], str]]=None,
         store_index_to: Optional[str]='time'):
         """
         Write data to file. This function will replace tables if they already exists.

@@ -811,8 +811,7 @@ class IterativeTtestOutlierDetection:
                 ol_param_table = ol_param_table[ol_param_table['tstat'].abs() >= cval]
 
                 if len(rm_ol_table.index) > 0:
-                    located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
-                    xregaux = xregaux.drop(columns='ol_id_' + rm_ol_table['id'].astype(str))
+                    xregaux = xregaux.drop(columns=('ol_id_' + rm_ol_table['id'].astype(str)).to_list())
                     self.ts_model = backup ## Revert back to previously fitted model
 
             xreg = xregaux

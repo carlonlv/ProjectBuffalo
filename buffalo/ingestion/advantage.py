@@ -181,6 +181,7 @@ class AdvantageStockGrepper:
         if 'timestamp' in result.columns:
             result.index = pd.to_datetime(result['timestamp'])
             result = result.drop(columns='timestamp')
+        result.index.name = None
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         self._check_schema(result, url, to_schema)
         return result
@@ -920,7 +921,7 @@ class AdvantageStockGrepper:
         """
         if function in ['WILLR', 'AROON', 'AROONOSC']:
             series_type = None
-        
+
         schema = ['time', function]
 
         to_schema = schema.remove('time')
