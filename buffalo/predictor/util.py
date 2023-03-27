@@ -22,7 +22,7 @@ class TimeSeries:
         """
         def __init__(self, data: torch.Tensor, seq_len: PositiveInt, target_cols: torch.Tensor):
             """
-            Initializer for Time Series Data. The row of data is the time dimension.
+            Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
             :param data: The concatenated pytorch tensor. The first column is time series of interest.
             :param seq_len: The length of sequence, the last row contains label.
@@ -52,14 +52,16 @@ class TimeSeries:
         Intialize time series data.
 
         :param endog: The endogenous variable. The row of data is the time dimension.
-        :param exog: The exogenous variable The row of data is the time dimension.
-        :param seq_len: The length of past information.
+        :param exog: The exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
+        :param seq_len: The length of past information, can only focus on the endogenous variable.
         :param batch_size: The size of batch for training.
         :param pin_memory: If True, the data loader will copy Tensors into device/CUDA pinned memory before returning them.
         :param pin_memory_device: The data loader will copy Tensors into device pinned memory before returning them if pin_memory is set to true.
         """
-        self.endog = endog
-        self.exog = exog
+        assert endog.shape[0] == exog.shape[0]
+
+        self.endog = endog.sort_index(ascending=True)
+        self.exog = exog.sort_index(ascending=True)
         self.seq_len = seq_len
         self.batch_size = batch_size
         self.pin_memory = pin_memory

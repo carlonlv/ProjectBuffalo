@@ -132,7 +132,7 @@ class AdvantageStockGrepper:
             year_slice: Optional[Literal['year1month1', 'year1month2', 'year1month3', 'year1month4', 'year1month5', 'year1month6', 'year1month7', 'year1month8', 'year1month9', 'year1month10', 'year1month11', 'year1month12', 'year2month1', 'year2month2', 'year2month3', 'year2month4', 'year2month5', 'year2month6', 'year2month7', 'year2month8', 'year2month9', 'year2month10', 'year2month11', 'year2month12']]='year1month1',
             adjusted: Optional[bool]=True) -> pd.DataFrame:
         """
-        This method returns raw (as-traded) intraday/daily/weekly/monthly time series (date, open, high, low, close, volume) of the global equity specified, covering 20+ years of historical data. If you are also interested in split/dividend-adjusted historical data, please use the Daily Adjusted API, which covers adjusted close values and historical split and dividend events.
+        This method returns raw (as-traded) intraday/daily/weekly/monthly time series (date, open, high, low, close, volume) of the global equity specified, covering 20+ years of historical data. If you are also interested in split/dividend-adjusted historical data, please use the Daily Adjusted API, which covers adjusted close values and historical split and dividend events. Timestamps returned are in US/Eastern Time zone.
 
         :param symbol: The name of the equity of your choice. For example: symbol=IBM.
         :param interval: Time interval between two consecutive data points in the time series. The following values are supported: 1min, 5min, 15min, 30min, 60min, daily, weekly, monthly.
@@ -182,6 +182,7 @@ class AdvantageStockGrepper:
             result.index = pd.to_datetime(result['timestamp'])
             result = result.drop(columns='timestamp')
         result.index.name = None
+        result.index = result.index.tz_localize('EST')
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         self._check_schema(result, url, to_schema)
         return result
@@ -235,7 +236,7 @@ class AdvantageStockGrepper:
             to_symbol: str,
             interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']) -> pd.DataFrame:
         """
-        This API returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close) of the FX currency pair specified, updated realtime.
+        This API returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close) of the FX currency pair specified, updated realtime. Timestamps returned are in UTC.
 
         :param from_symbol: A three-letter symbol from the forex currency list. For example: from_symbol=EUR
         :param to_symbol: A three-letter symbol from the forex currency list. For example: to_symbol=USD
@@ -270,7 +271,7 @@ class AdvantageStockGrepper:
         self._check_schema(result, url, schema)
         if len(result.index) == 0:
             return pd.DataFrame(columns=to_schema)
-        result.index = pd.to_datetime(result['timestamp'])
+        result.index = pd.to_datetime(result['timestamp'], utc=True)
         result = result.drop(columns='timestamp')
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         self._check_schema(result, url, to_schema)
@@ -282,7 +283,7 @@ class AdvantageStockGrepper:
             physical_symbol: str,
             interval: Literal['1min', '5min', '15min', '30min', '60min', 'daily', 'weekly', 'monthly']) -> pd.DataFrame:
         """
-        This method returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close, volume) of the cryptocurrency specified, updated realtime.
+        This method returns intraday/daily/weekly/monthly time series (timestamp, open, high, low, close, volume) of the cryptocurrency specified, updated realtime. Timestamps returned are in UTC.
 
         :param digital_symbol: The digital/crypto currency of your choice. It can be any of the currencies in the digital currency list. For example: digital_symbol=ETH.
         :param physical_symbol: The exchange market of your choice. It can be any of the market in the market list. For example: physical_symbol=USD.
@@ -322,7 +323,7 @@ class AdvantageStockGrepper:
         self._check_schema(result, url, schema)
         if len(result.index) == 0:
             return pd.DataFrame(columns=to_schema)
-        result.index = pd.to_datetime(result['timestamp'])
+        result.index = pd.to_datetime(result['timestamp'], utc=True)
         result = result.drop(columns='timestamp')
         result.columns = result.columns.str.replace(f' ({physical_symbol})', '', regex=False)
         result.columns = result.columns.str.replace(' (USD)', '_usd', regex=False)
@@ -549,7 +550,7 @@ class AdvantageStockGrepper:
         ticker_lst = pd.concat(ticker_lst)
 
         result = result.drop(columns=['topics', 'ticker_sentiment'])
-        result.index = pd.to_datetime(result['time_published'])
+        result.index = pd.to_datetime(result['time_published'], utc=True)
         result = result.drop(columns='time_published')
         result = result.merge(topic_lst).merge(ticker_lst)
         self._check_schema(data, url, to_schema)
