@@ -2,14 +2,77 @@
 This module contains helper functions to manipulate predictors.
 """
 
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
+import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from ..utility import PositiveInt, Prob
+from .seasonality import ChisquaredtestSeasonalityDetection
 
+
+def predict_next_timestamps(timestamps: pd.DatetimeIndex,
+                            num_indices: PositiveInt=1,
+                            unit: Literal['D', 'H', 'T', 'S', 'L', 'U', 'N']='D',
+                            max_period: Optional[PositiveInt]=None) -> Optional[PositiveInt]:
+    """
+    Predict the occurrence of next timestamps. Assuming the timestamps
+
+    :param timestamps: Past time stamps in Datetime indices.
+    :param unit: The unit is used for extrapolation. D or days: days, H or hours: hours, T or min or minutes: minutes, S or seconds: seconds, L or ms or milliseconds: milliseconds, U or us or microseconds: microseconds, N or ns or nanoseconds: nanoseconds.
+    :param num_indices: The future number of indices to be extrapolated.
+    :param max_period: Maximum period allowed.
+    :return: The predicted future timestamps.
+    """
+    tmp = pd.DataFrame({'ts': timestamps.sort_values()})
+    tmp['ts'] = tmp['ts'].diff()
+    tmp['ts'] = tmp['ts'].apply(lambda x: x.total_seconds())
+    if unit == 'D':
+        tmp['ts'] /= 86400
+    elif unit == 'H':
+        tmp['ts'] /= 3600
+    elif unit == 'T':
+        tmp['ts'] /= 60
+    elif unit == 'L':
+        tmp['ts'] *= 1000
+    elif unit == 'U':
+        tmp['ts'] *= 1000000
+    elif unit == 'N':
+        tmp['ts'] *= 1000000000
+    tmp = tmp.dropna()
+    seasonality_detector = ChisquaredtestSeasonalityDetection(max_period = max_period)
+    freqs, fitted_model = seasonality_detector.fit(tmp)['ts']
+    predictors = seasonality_detector.get_harmonic_exog(num_indices, freqs, len(timestamps))
+    predicted =  np.cumsum(np.round(fitted_model.predict(predictors)))
+    if unit == 'D':
+        predicted = pd.Series([pd.Timedelta(days=x) for x in predicted])
+    elif unit == 'H':
+        predicted = pd.Series([pd.Timedelta(hours=x) for x in predicted])
+    elif unit == 'T':
+        predicted = pd.Series([pd.Timedelta(minutes=x) for x in predicted])
+    elif unit == 'L':
+        predicted = pd.Series([pd.Timedelta(milliseconds=x) for x in predicted])
+    elif unit == 'U':
+        predicted = pd.Series([pd.Timedelta(microseconds=x) for x in predicted])
+    elif unit == 'N':
+        predicted = pd.Series([pd.Timedelta(nanoseconds=x) for x in predicted])
+    else:
+        predicted = pd.Series([pd.Timedelta(seconds=x) for x in predicted])
+    return timestamps.max() + predicted
+
+def align_dataframe_by_time(target_df: pd.DataFrame, other_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Align the other dataframe to the first dataframe. by index, where indices are assumed to be of type Timestamp.
+
+    :param target_df: The first dataframe.
+    :param other_df: The second dataframe.
+    :return: The concatenated dataframe by rows.
+    """
+    assert isinstance(target_df.index, pd.DatetimeIndex) and isinstance(other_df.index, pd.DatetimeIndex)
+    other_df = other_df.reindex(target_df.index).sort_index().ffill()
+    return pd.concat([target_df, other_df], axis=1)
 
 class TimeSeries:
     """
