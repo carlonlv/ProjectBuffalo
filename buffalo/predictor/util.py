@@ -3,6 +3,7 @@ This module contains helper functions to manipulate predictors.
 """
 
 from typing import List, Literal, Optional, Union
+from warnings import warn
 
 import numpy as np
 import pandas as pd
@@ -12,23 +13,29 @@ from torch.utils.data import DataLoader, Dataset, random_split
 from ..utility import PositiveInt, Prob
 from .seasonality import ChisquaredtestSeasonalityDetection
 
+ALL_UNITS = ['D', 'H', 'T', 'S', 'L', 'U', 'N']
 
 def predict_next_timestamps(timestamps: pd.DatetimeIndex,
                             num_indices: PositiveInt=1,
-                            unit: Literal['D', 'H', 'T', 'S', 'L', 'U', 'N']='D',
                             max_period: Optional[PositiveInt]=None) -> Optional[PositiveInt]:
     """
     Predict the occurrence of next timestamps. Assuming the timestamps
 
     :param timestamps: Past time stamps in Datetime indices.
-    :param unit: The unit is used for extrapolation. D or days: days, H or hours: hours, T or min or minutes: minutes, S or seconds: seconds, L or ms or milliseconds: milliseconds, U or us or microseconds: microseconds, N or ns or nanoseconds: nanoseconds.
     :param num_indices: The future number of indices to be extrapolated.
     :param max_period: Maximum period allowed.
     :return: The predicted future timestamps.
     """
     tmp = pd.DataFrame({'ts': timestamps.sort_values()})
     tmp['ts'] = tmp['ts'].diff()
+    tmp = tmp.dropna()
+    units = tmp['ts'].apply(lambda x: x.resolution_string).unique()
     tmp['ts'] = tmp['ts'].apply(lambda x: x.total_seconds())
+    if len(unit) > 1:
+        unit = ALL_UNITS[max([x for x in range(len(ALL_UNITS)) if ALL_UNITS[x] in units])]
+        warn(f'Multiple resolutions in timestamps detected, using smallest time unit {unit}.')
+    else:
+        unit = units.iloc[0]
     if unit == 'D':
         tmp['ts'] /= 86400
     elif unit == 'H':
@@ -41,7 +48,6 @@ def predict_next_timestamps(timestamps: pd.DatetimeIndex,
         tmp['ts'] *= 1000000
     elif unit == 'N':
         tmp['ts'] *= 1000000000
-    tmp = tmp.dropna()
     seasonality_detector = ChisquaredtestSeasonalityDetection(max_period = max_period)
     freqs, fitted_model = seasonality_detector.fit(tmp)['ts']
     predictors = seasonality_detector.get_harmonic_exog(num_indices, freqs, len(timestamps))
@@ -62,16 +68,21 @@ def predict_next_timestamps(timestamps: pd.DatetimeIndex,
         predicted = pd.Series([pd.Timedelta(seconds=x) for x in predicted])
     return timestamps.max() + predicted
 
-def align_dataframe_by_time(target_df: pd.DataFrame, other_df: pd.DataFrame) -> pd.DataFrame:
+def align_dataframe_by_time(target_df: pd.DataFrame,
+                            other_df: pd.DataFrame,
+                            max_period: Optional[PositiveInt]=None) -> pd.DataFrame:
     """
     Align the other dataframe to the first dataframe. by index, where indices are assumed to be of type Timestamp.
 
     :param target_df: The first dataframe.
-    :param other_df: The second dataframe.
+    :param other_df: The second dataframe. This dataframe will align the target_df in terms of time.
+    :param max_period: Maximum period allowed. This parameter is used when determining expiry time of the last observation for other_df.
     :return: The concatenated dataframe by rows.
     """
     assert isinstance(target_df.index, pd.DatetimeIndex) and isinstance(other_df.index, pd.DatetimeIndex)
+    expire_time = predict_next_timestamps(other_df.index, max_period=max_period)
     other_df = other_df.reindex(target_df.index).sort_index().ffill()
+    other_df = other_df[other_df.index < expire_time]
     return pd.concat([target_df, other_df], axis=1)
 
 class TimeSeries:

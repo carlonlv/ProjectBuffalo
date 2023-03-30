@@ -99,5 +99,5 @@ class ChisquaredtestSeasonalityDetection:
                 else:
                     break
             result[i] = (exog.columns, model)
-            print(f'Detected seasonality {concat_list(exog.columns)} from {i}.')
+            print(f'Detected seasonality {concat_list(exog.columns.drop("const"))} from {i}.')
         return result
