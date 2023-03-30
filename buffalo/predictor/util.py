@@ -2,7 +2,7 @@
 This module contains helper functions to manipulate predictors.
 """
 
-from typing import List, Literal, Optional, Union
+from typing import List, Optional, Union
 from warnings import warn
 
 import numpy as np
@@ -28,14 +28,14 @@ def predict_next_timestamps(timestamps: pd.DatetimeIndex,
     """
     tmp = pd.DataFrame({'ts': timestamps.sort_values()})
     tmp['ts'] = tmp['ts'].diff()
-    tmp = tmp.dropna()
+    tmp.dropna(inplace=True)
     units = tmp['ts'].apply(lambda x: x.resolution_string).unique()
     tmp['ts'] = tmp['ts'].apply(lambda x: x.total_seconds())
-    if len(unit) > 1:
+    if len(units) > 1:
         unit = ALL_UNITS[max([x for x in range(len(ALL_UNITS)) if ALL_UNITS[x] in units])]
         warn(f'Multiple resolutions in timestamps detected, using smallest time unit {unit}.')
     else:
-        unit = units.iloc[0]
+        unit = units[0]
     if unit == 'D':
         tmp['ts'] /= 86400
     elif unit == 'H':
@@ -49,7 +49,7 @@ def predict_next_timestamps(timestamps: pd.DatetimeIndex,
     elif unit == 'N':
         tmp['ts'] *= 1000000000
     seasonality_detector = ChisquaredtestSeasonalityDetection(max_period = max_period)
-    freqs, fitted_model = seasonality_detector.fit(tmp)['ts']
+    freqs, fitted_model = seasonality_detector.fit(tmp, verbose=False)['ts']
     predictors = seasonality_detector.get_harmonic_exog(num_indices, freqs, len(timestamps))
     predicted =  np.cumsum(np.round(fitted_model.predict(predictors)))
     if unit == 'D':
@@ -81,9 +81,17 @@ def align_dataframe_by_time(target_df: pd.DataFrame,
     """
     assert isinstance(target_df.index, pd.DatetimeIndex) and isinstance(other_df.index, pd.DatetimeIndex)
     expire_time = predict_next_timestamps(other_df.index, max_period=max_period)
+    if other_df.index.tz is None:
+        other_df.index = other_df.index.tz_localize(target_df.index.tz)
+        expire_time.iloc[0] = expire_time.iloc[0].tz_localize(target_df.index.tz)
+    else:
+        other_df.index = other_df.index.tz_convert(target_df.index.tz)
+        expire_time.iloc[0] = expire_time.iloc[0].tz_convert(target_df.index.tz)
     other_df = other_df.reindex(target_df.index).sort_index().ffill()
-    other_df = other_df[other_df.index < expire_time]
-    return pd.concat([target_df, other_df], axis=1)
+    other_df = other_df[other_df.index < expire_time.iloc[0]]
+    result = pd.concat([target_df, other_df], axis=1, verify_integrity=True)
+    result = result.dropna()
+    return result
 
 class TimeSeries:
     """

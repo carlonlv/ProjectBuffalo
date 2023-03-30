@@ -890,6 +890,8 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
         result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
@@ -924,8 +926,7 @@ class AdvantageStockGrepper:
 
         schema = ['time', function]
 
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+        to_schema = [x.lower() for x in schema if x != 'time']
 
         url = self._construct_url(
             function = function,
@@ -940,6 +941,9 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 
@@ -1000,8 +1004,7 @@ class AdvantageStockGrepper:
 
         schema = ['time', function]
 
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+        to_schema = [x.lower() for x in schema if x != 'time']
 
         url = self._construct_url(
             function = function,
@@ -1024,6 +1027,9 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 
@@ -1054,8 +1060,7 @@ class AdvantageStockGrepper:
 
         schema = ['time', function]
 
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+        to_schema = [x.lower() for x in schema if x != 'time']
 
         url = self._construct_url(
             function = function,
@@ -1070,6 +1075,9 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 
@@ -1092,8 +1100,7 @@ class AdvantageStockGrepper:
         """
         schema = ['time', function]
 
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+        to_schema = [x.lower() for x in schema if x != 'time']
 
         url = self._construct_url(
             function = function,
@@ -1107,6 +1114,9 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result
 
@@ -1149,10 +1159,12 @@ class AdvantageStockGrepper:
             series_type = None
             time_period = None
 
-        schema = ['time', function]
-
-        to_schema = schema.remove('time')
-        to_schema = [x.lower() for x in to_schema]
+        if function == 'HT_SINE':
+            schema = ['time', 'LEAD SINE', 'SINE']
+            to_schema = ['lead_sine', 'sine']
+        else:
+            schema = ['time', function]
+            to_schema = [x.lower() for x in schema if x != 'time']
 
         url = self._construct_url(
             function = function,
@@ -1170,5 +1182,8 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.columns = result.columns.str.lower()
+        result.columns = result.columns.str.replace(r'\s', '_', regex=True)
+        result.index = pd.to_datetime(result['time'])
+        result = result.drop(columns='time')
         self._check_schema(result, url, to_schema)
         return result

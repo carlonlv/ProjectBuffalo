@@ -60,12 +60,12 @@ class ChisquaredtestSeasonalityDetection:
                 elif re.search(r'cos_\d+', freq):
                     ext_freq = float(freq.replace('cos_', ''))
                     exog[freq] = np.cos(2 * np.pi * ext_freq * indices)
-        exog = pd.DataFrame(exog)
+        exog = pd.DataFrame(exog, index=indices)
         if add_const:
             exog = sm.add_constant(exog, has_constant='add')
         return exog
 
-    def fit(self, endog: pd.DataFrame) -> Dict[str, Tuple[List[PositiveFlt], Any]]:
+    def fit(self, endog: pd.DataFrame, verbose: bool=True) -> Dict[str, Tuple[List[PositiveFlt], Any]]:
         """
         Fit Harmonic Regression using identified most signifcant frequencies.
 
@@ -99,5 +99,6 @@ class ChisquaredtestSeasonalityDetection:
                 else:
                     break
             result[i] = (exog.columns, model)
-            print(f'Detected seasonality {concat_list(exog.columns.drop("const"))} from {i}.')
+            if verbose:
+                print(f'Detected seasonality {concat_list(exog.columns.drop("const"))} from {i}.')
         return result
