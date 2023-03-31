@@ -2,13 +2,17 @@
 This module contains models for trend predictor for time series.
 """
 
-from typing import Literal, Tuple, Optional, Any
+from math import ceil, floor
+from typing import Any, Literal, Tuple
 
 import pandas as pd
 import torch
 import torch.nn as nn
+import copy
+from torch.utils.data import DataLoader, Subset
+from tqdm import tqdm
 
-from ..utility import PositiveInt, Prob
+from ..utility import PositiveInt, Prob, concat_dict
 
 
 class RNN(nn.Module):
@@ -58,47 +62,74 @@ class RNN(nn.Module):
         input_v = input_v.to(self.device)
         return self.model(input=input_v, h_0=h_0)
 
-    def train_loop(self, opt, t_loader, v_loader, epochs):
+    def fit(self, opt: Any, loss: Any, data_loader: DataLoader, validation_ratio: Prob, epochs: PositiveInt, multi_fold_valiation: bool=False, verbose: bool=True):
         """
+        Train the underlying model.
 
+        :param opt: The optimizer.
+        :param loss: The loss function.
+        :param data_loader: The data set DataLoader used to split the training set and validation set.
+        :param validation_ratio: The ratio of validation set.
+        :param epochs: The number of epochs.
         """
-        for epoch in range(epochs):
-            t_loss_sum = 0
-            v_loss_sum = 0
-            for batch in t_loader:
-                opt.zero_grad()
+        all_indices = set(range(len(data_loader.dataset)))
+        if validation_ratio == 0:
+            train_indices = [all_indices]
+        else:
+            fold_size = floor(len(data_loader.dataset) * validation_ratio)
+            if multi_fold_valiation:
+                n_folds = ceil(1 / validation_ratio)
+                train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(data_loader.dataset) - 1))) for i in range(n_folds)]
+            else:
+                n_folds = 1
+                train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(data_loader.dataset) - 1))) for i in range(n_folds)]
 
-                data, label, lens = batch
-                data, label = data.to(self.device), label.to(self.device)
-                pred = self.model(data, lens)
+        train_record = []
+        for train_indice in tqdm(train_indices):
+            for epoch in tqdm(range(epochs)):
+                t_loss_sum = 0
+                v_loss_sum = 0
 
-                loss = nn.CrossEntropyLoss()(pred, label)
-                loss.backward()
-                opt.step()
-                t_loss_sum += loss.item()
+                train_set = Subset(data_loader.dataset, train_indice)
+                valid_set = Subset(data_loader.dataset, all_indices - train_indice)
+                train_loader = copy.copy(data_loader)
+                train_loader.dataset = train_set
+                valid_loader = copy.copy(data_loader)
+                valid_loader.dataset = valid_set
 
-            with torch.no_grad():
-                for batch in v_loader:
+                ## Train Procedure
+                for batch in data_loader:
+                    opt.zero_grad()
+
                     data, label, lens = batch
                     data, label = data.to(self.device), label.to(self.device)
                     pred = self.model(data, lens)
 
-                    loss = nn.CrossEntropyLoss()(pred, label)
-                    v_loss_sum += loss.item()
+                    loss = loss(pred, label)
+                    loss.backward()
+                    opt.step()
+                    t_loss_sum += loss.item()
 
-            if epoch % 5 == 0:
-                out = "Epoch {}: Train Loss {}, Val Loss {}"
-                avg_t_loss = t_loss_sum / len(t_loader)
-                avg_v_loss = v_loss_sum / len(v_loader)
-                print(out.format(epoch, avg_t_loss, avg_v_loss))
+                if len(valid_set) > 0:
+                    with torch.no_grad():
+                        for batch in valid_loader:
+                            data, label, lens = batch
+                            data, label = data.to(self.device), label.to(self.device)
+                            pred = self.model(data, lens)
 
-    def fit(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], loss: Any) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """
-        Automatic Procedure for Detection of Outliers.
+                            loss = loss(pred, label)
+                            v_loss_sum += loss.item()
 
-        :param endog: a training time series.
-        :param exog: an optional matrix of regressors with the same number of rows as y.
-        :param fit_args: Additional arguments besides endog and exog to be passed into fit() method.
-        """
+                curr_record = pd.Series({
+                    'train_start': min(train_indice),
+                    'train_end': max(train_indice),
+                    'epoch': epoch,
+                    'training_loss': t_loss_sum,
+                    'validation_loss': v_loss_sum
+                })
+                train_record.append(curr_record)
 
-        return
+                if verbose and (epoch % 10 == 0):
+                    print(concat_dict(curr_record.to_dict()))
+
+        return train_record

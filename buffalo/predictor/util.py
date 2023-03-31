@@ -154,7 +154,7 @@ class TimeSeries:
         target_cols = torch.arange(0, endog_array.shape[1])
         self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=0), self.seq_len, target_cols)
 
-    def get_splitted_dataset(self, train_ratio: Prob, test_ratio: Prob, include_valid: bool) -> List[Dataset]:
+    def get_splitted_dataset(self, train_ratio: Prob) -> List[Dataset]:
         """
         Return splitted data set into training set, testing set and validation set.
 
@@ -163,15 +163,9 @@ class TimeSeries:
         :param include_valid: Whether to split validation set, the remainder from train_ratio and test_ratio is used.
         :return: Splitted datasets.
         """
-        assert train_ratio + test_ratio <= 1
-
         train_size = int(self.dataset.shape[0] * train_ratio)
-        test_size = int(self.dataset.shape[0] * test_ratio)
+        test_size = self.dataset.shape[0] - train_size
         splitted_size = [train_size, test_size]
-
-        if include_valid:
-            valid_size = self.dataset.shape[0] - train_size - test_size
-            splitted_size.append(valid_size)
 
         return random_split(self.dataset, splitted_size)
 
