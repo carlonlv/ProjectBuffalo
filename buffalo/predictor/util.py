@@ -149,8 +149,8 @@ class TimeSeries:
         self.pin_memory = pin_memory
         self.pin_memory_device = pin_memory_device
 
-        endog_array = torch.Tensor(self.endog)
-        exog_array = torch.Tensor(self.exog)
+        endog_array = torch.Tensor(self.endog.to_numpy())
+        exog_array = torch.Tensor(self.exog.to_numpy())
         target_cols = torch.arange(0, endog_array.shape[1])
         self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=0), self.seq_len, target_cols)
 

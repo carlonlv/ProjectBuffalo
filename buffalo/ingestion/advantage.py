@@ -5,6 +5,7 @@ This module provide api access to Alpha-advantage api.
 import warnings
 from typing import Callable, Dict, List, Literal, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 import requests
 from pytz import timezone
@@ -67,26 +68,40 @@ class AdvantageStockGrepper:
             lst.append(f'{key}={value}')
         return self.url_base + '&'.join(lst)
 
-    def _check_schema(self, ingested_result: Union[pd.DataFrame, dict], url: str, expected_schema: Optional[List[str]]):
+    def _check_schema(self, ingested_result: Union[pd.DataFrame, dict], url: str, schema: Optional[Union[List[str], Dict[str, np.dtype]]]):
         """
         Check the retuned dataframe on matching the schema and catch and raise error if detected.
 
         :param ingested_result: The downloaded dataframe or dictionary.
         :param url: The orginal url where data comes from.
-        :param expected_schema: The expected list of strings for the schema.
+        :param schema: The expected list of strings for the schema.
         """
-        if expected_schema is not None:
+        if schema is not None:
+            ## Schema enforcing
             if isinstance(ingested_result, pd.DataFrame):
                 actual_schema = ingested_result.columns
             elif isinstance(ingested_result, dict):
                 actual_schema = ingested_result.keys()
             else:
                 actual_schema = None
+
+            if isinstance(schema, list):
+                expected_schema = schema
+            else:
+                expected_schema = schema.keys()
+
             if actual_schema is not None and set(actual_schema) != set(expected_schema):
-                if not set(actual_schema).issubset(set(expected_schema)):
-                    raise KeyError(f'Ingestion is not a subset of expected schema from {url}. (Expected: {concat_list(expected_schema)} Actual: {concat_list(actual_schema)})')
+                if not set(actual_schema).issubset(set(schema)):
+                    raise KeyError(f'Ingestion is not a subset of expected schema from {url}. (Expected: {concat_list(schema)} Actual: {concat_list(actual_schema)})')
                 else:
-                    warnings.warn(f'Ingestion deviates from expected schema from {url}. Missing keys: {concat_list(set(expected_schema) - set(actual_schema))}.')
+                    warnings.warn(f'Ingestion deviates from expected schema from {url}. Missing keys: {concat_list(set(schema) - set(actual_schema))}.')
+
+            ## Type enforcing
+            if isinstance(schema, dict) and isinstance(ingested_result, pd.DataFrame):
+                for key, value in ingested_result.dtypes.items():
+                    if value != schema[key]:
+                        warnings.warn(f'Ingestion results from {url} has wrong type for {key} (Expected: {schema[key]} Actual {value}).')
+                        ingested_result[key] = ingested_result[key].astype({key: schema[key]})
 
     def _check_args(self, ingested_result: Union[pd.DataFrame, dict], url: str):
         """
@@ -148,17 +163,17 @@ class AdvantageStockGrepper:
                 adjusted = None
                 if function == 'TIME_SERIES_DAILY_ADJUSTED':
                     schema = ['timestamp', 'open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient']
-                    to_schema = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient']
+                    to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'adjusted_close': np.dtype('float32'), 'volume': np.dtype('int64'), 'dividend_amount': np.dtype('float32'), 'split_coefficient': np.dtype('float32')}
                 else:
                     schema = ['timestamp', 'open', 'high', 'low', 'close', 'adjusted close', 'volume', 'dividend amount']
-                    to_schema = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 'dividend_amount']
+                    to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'adjusted_close': np.dtype('float32'), 'volume': np.dtype('int64'), 'dividend_amount': np.dtype('float32')}
             else:
                 schema = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-                to_schema = ['open', 'high', 'low', 'close', 'volume']
+                to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'volume': np.dtype('int64')}
         else:
             function = 'TIME_SERIES_INTRADAY_EXTENDED'
             schema = ['time', 'open', 'high', 'low', 'close', 'volume']
-            to_schema = ['open', 'high', 'low', 'close', 'volume']
+            to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'volume': np.dtype('int64')}
 
         url = self._construct_url(
             function = function,
@@ -212,7 +227,7 @@ class AdvantageStockGrepper:
                   'Realtime Currency Exchange Rate.7. Time Zone',
                   'Realtime Currency Exchange Rate.8. Bid Price',
                   'Realtime Currency Exchange Rate.9. Ask Price']
-        to_schema = ['from_currency_code', 'from_currency_name', 'to_currency_code', 'to_currency_name', 'exchange_rate', 'bid_price', 'ask_price']
+        to_schema = {'from_currency_code': np.dtype('str'), 'from_currency_name': np.dtype('str'), 'to_currency_code': np.dtype('str'), 'to_currency_name': np.dtype('str'), 'exchange_rate': np.dtype('float32'), 'bid_price': np.dtype('float32'), 'ask_price': np.dtype('float32')}
 
         response = requests.get(url, timeout=10)
         data = response.json()
@@ -255,7 +270,7 @@ class AdvantageStockGrepper:
             function = 'FX_INTRADAY'
 
         schema = ['timestamp', 'open', 'high', 'low', 'close']
-        to_schema = ['open', 'high', 'low', 'close']
+        to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -299,15 +314,12 @@ class AdvantageStockGrepper:
                       'open (USD)', 'high (USD)', 'low (USD)', 'close (USD)',
                       'volume',
                       'market cap (USD)']
-            to_schema = ['open', 'high', 'low', 'close',
-                         'open_usd', 'high_usd', 'low_usd', 'close_usd',
-                         'volume',
-                         'market_cap_usd']
+            to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'open_usd': np.dtype('float32'), 'high_usd': np.dtype('float32'), 'low_usd': np.dtype('float32'), 'close_usd': np.dtype('float32'), 'volume': np.dtype('float32'), 'market_cap_usd': np.dtype('float32')}
         else:
             function = 'CRYPTO_INTRADAY'
             outputsize = 'full'
             schema = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
-            to_schema = ['open', 'high', 'low', 'close', 'volume']
+            to_schema = {'open': np.dtype('float32'), 'high': np.dtype('float32'), 'low': np.dtype('float32'), 'close': np.dtype('float32'), 'volume': np.dtype('int64')}
 
         url = self._construct_url(
             function = function,
@@ -362,6 +374,7 @@ class AdvantageStockGrepper:
 
         schema = ['name', 'interval', 'unit', 'date', 'value']
         to_schema = ['name', 'interval', 'unit', 'value']
+        to_schema = {'name': np.dtype('str'), 'interval': np.dtype('str'), 'unit': np.dtype('str'), 'value': np.dtype('float32')}
 
         url = self._construct_url(
             function = commodity,
@@ -420,7 +433,7 @@ class AdvantageStockGrepper:
             maturity = None
 
         schema = ['name', 'interval', 'unit', 'data']
-        to_schema = ['name', 'interval', 'unit', 'value']
+        to_schema = {'name': np.dtype('str'), 'interval': np.dtype('str'), 'unit': np.dtype('str'), 'value': np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -518,6 +531,25 @@ class AdvantageStockGrepper:
                      'relevance_score',
                      'ticker_sentiment_score',
                      'ticker_sentiment_label']
+        to_schema = {'items': np.dtype('str'),
+                     'sentiment_score_definition': np.dtype('str'),
+                     'relevance_score_definition': np.dtype('str'),
+                     'title': np.dtype('str'),
+                     'url': np.dtype('str'),
+                     'authors': np.dtype('str'),
+                     'summary': np.dtype('str'),
+                     'banner_image': np.dtype('str'),
+                     'source': np.dtype('str'),
+                     'category_within_source': np.dtype('str'),
+                     'source_domain': np.dtype('str'),
+                     'topic': np.dtype('str'),
+                     'topic_relevance_score': np.dtype('float32'),
+                     'overall_sentiment_score': np.dtype('float32'),
+                     'overall_sentiment_label': np.dtype('str'),
+                     'ticker_relevance_score': np.dtype('float32'),
+                     'relevance_score': np.dtype('float32'),
+                     'ticker_sentiment_score': np.dtype('float32'),
+                     'ticker_sentiment_label': np.dtype('str')}
 
         url = self._construct_url(
             function = function,
@@ -535,7 +567,6 @@ class AdvantageStockGrepper:
         self._check_schema(data, url, schema)
         if len(data) == 0:
             return pd.DataFrame(columns=to_schema)
-
         result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
         result = result.reset_index(drop=False)
 
@@ -580,7 +611,7 @@ class AdvantageStockGrepper:
             assert horizon in acceptable_horizon, f'horizon needs to be one of {concat_list(acceptable_horizon)}.'
 
             schema = ['symbol', 'name', 'reportDate', 'fiscalDateEnding', 'estimate', 'currency']
-            to_schema = ['symbol', 'name', 'report_date', 'estimate', 'currency']
+            to_schema = {'symbol': np.dtype('str'), 'name': np.dtype('str'), 'fiscalDateEnding': np.dtype('datetime64[ns]'), 'estimate': np.dtype('float32'), 'currency': np.dtype('str')}
 
             url = self._construct_url(
                 function = function,
@@ -591,107 +622,116 @@ class AdvantageStockGrepper:
             data = pd.read_csv(url)
         else:
             horizon = None
-
             if function == 'INCOME_STATEMENT':
                 schema = ['symbol', 'annualReports', 'quarterlyReports']
-                to_schema = ['reported_currency',
-                             'gross_profit',
-                             'total_revenue',
-                             'cost_of_revenue',
-                             'costof_goods_and_services_sold',
-                             'operating_income',
-                             'selling_general_and_administrative',
-                             'research_and_development',
-                             'operating_expenses',
-                             'investment_income_net',
-                             'net_interest_income',
-                             'interest_income',
-                             'interest_expense',
-                             'noninterest_income',
-                             'other_nonoperating_income',
-                             'depreciation',
-                             'depreciation_and_amortization',
-                             'income_before_tax',
-                             'income_tax_expense',
-                             'interest_and_debt_expense',
-                             'net_income_from_continuing_operations',
-                             'comprehensive_income_net_of_tax',
-                             'ebit',
-                             'ebitda',
-                             'net_income',
-                             'symbol', 'freq']
+                to_schema = {'reported_currency': np.dtype('str'),
+                             'gross_profit': np.dtype('float32'),
+                             'total_revenue': np.dtype('float32'),
+                             'cost_of_revenue': np.dtype('float32'),
+                             'costof_goods_and_services_sold': np.dtype('float32'),
+                             'operating_income': np.dtype('float32'),
+                             'selling_general_and_administrative': np.dtype('float32'),
+                             'research_and_development': np.dtype('float32'),
+                             'operating_expenses': np.dtype('float32'),
+                             'investment_income_net': np.dtype('float32'),
+                             'net_interest_income': np.dtype('float32'),
+                             'interest_income': np.dtype('float32'),
+                             'interest_expense': np.dtype('float32'),
+                             'noninterest_income': np.dtype('float32'),
+                             'other_nonoperating_income': np.dtype('float32'),
+                             'depreciation': np.dtype('float32'),
+                             'depreciation_and_amortization': np.dtype('float32'),
+                             'income_before_tax': np.dtype('float32'),
+                             'income_tax_expense': np.dtype('float32'),
+                             'interest_and_debt_expense': np.dtype('float32'),
+                             'net_income_from_continuing_operations': np.dtype('float32'),
+                             'comprehensive_income_net_of_tax': np.dtype('float32'),
+                             'ebit': np.dtype('float32'),
+                             'ebitda': np.dtype('float32'),
+                             'net_income': np.dtype('float32'),
+                             'symbol': np.dtype('str'),
+                             'freq': np.dtype('str')}
             elif function == 'BALANCE_SHEET':
                 schema = ['symbol', 'annualReports', 'quarterlyReports']
-                to_schema = ['reported_currency',
-                             'total_assets',
-                             'total_current_assets',
-                             'cash_and_cash_equivalents_at_carrying_value',
-                             'cash_and_short_term_investments',
-                             'inventory',
-                             'current_net_receivables',
-                             'total_noncurrent_assets',
-                             'property_plant_equipment',
-                             'accumulated_depreciation_amortization_ppe',
-                             'intangible_assets',
-                             'intangible_assets_excluding_goodwill',
-                             'goodwill',
-                             'investments',
-                             'long_term_investments',
-                             'short_term_investments',
-                             'other_current_assets',
-                             'other_noncurrent_assets',
-                             'total_liabilities',
-                             'total_current_liabilities',
-                             'current_accounts_payable',
-                             'deferred_revenue',
-                             'current_debt',
-                             'short_term_debt',
-                             'total_noncurrent_liabilities',
-                             'capital_lease_obligations',
-                             'long_term_debt',
-                             'current_long_term_debt',
-                             'long_term_debt_noncurrent',
-                             'short_long_term_debt_total',
-                             'other_current_liabilities',
-                             'other_noncurrent_liabilities',
-                             'total_shareholder_equity',
-                             'treasury_stock',
-                             'retained_earnings',
-                             'common_stock',
-                             'common_stock_shares_outstanding',
-                             'symbol', 'freq']
+                to_schema = {'reported_currency': np.dtype('str'),
+                             'total_assets': np.dtype('float32'),
+                             'total_current_assets': np.dtype('float32'),
+                             'cash_and_cash_equivalents_at_carrying_value': np.dtype('float32'),
+                             'cash_and_short_term_investments': np.dtype('float32'),
+                             'inventory': np.dtype('float32'),
+                             'current_net_receivables': np.dtype('float32'),
+                             'total_noncurrent_assets': np.dtype('float32'),
+                             'property_plant_equipment': np.dtype('float32'),
+                             'accumulated_depreciation_amortization_ppe': np.dtype('float32'),
+                             'intangible_assets': np.dtype('float32'),
+                             'intangible_assets_excluding_goodwill': np.dtype('float32'),
+                             'goodwill': np.dtype('float32'),
+                             'investments': np.dtype('float32'),
+                             'long_term_investments': np.dtype('float32'),
+                             'short_term_investments': np.dtype('float32'),
+                             'other_current_assets': np.dtype('float32'),
+                             'other_noncurrent_assets': np.dtype('float32'),
+                             'total_liabilities': np.dtype('float32'),
+                             'total_current_liabilities': np.dtype('float32'),
+                             'current_accounts_payable': np.dtype('float32'),
+                             'deferred_revenue': np.dtype('float32'),
+                             'current_debt': np.dtype('float32'),
+                             'short_term_debt': np.dtype('float32'),
+                             'total_noncurrent_liabilities': np.dtype('float32'),
+                             'capital_lease_obligations': np.dtype('float32'),
+                             'long_term_debt': np.dtype('float32'),
+                             'current_long_term_debt': np.dtype('float32'),
+                             'long_term_debt_noncurrent': np.dtype('float32'),
+                             'short_long_term_debt_total': np.dtype('float32'),
+                             'other_current_liabilities': np.dtype('float32'),
+                             'other_noncurrent_liabilities': np.dtype('float32'),
+                             'total_shareholder_equity': np.dtype('float32'),
+                             'treasury_stock': np.dtype('float32'),
+                             'retained_earnings': np.dtype('float32'),
+                             'common_stock': np.dtype('float32'),
+                             'common_stock_shares_outstanding': np.dtype('float32'),
+                             'symbol': np.dtype('str'),
+                             'freq': np.dtype('str')}
             elif function == 'CASH_FLOW':
                 schema = ['symbol', 'annualReports', 'quarterlyReports']
-                to_schema = ['reported_currency',
-                             'operating_cashflow',
-                             'payments_for_operating_activities',
-                             'proceeds_from_operating_activities',
-                             'change_in_operating_liabilities',
-                             'change_in_operating_assets',
-                             'depreciation_depletion_and_amortization',
-                             'capital_expenditures',
-                             'change_in_receivables',
-                             'change_in_inventory',
-                             'profit_loss',
-                             'cashflow_from_investment',
-                             'cashflow_from_financing',
-                             'proceeds_from_repayments_of_short_term_debt',
-                             'payments_for_repurchase_of_common_stock', 'payments_for_repurchase_of_equity',
-                             'payments_for_repurchase_of_preferred_stock', 'dividend_payout',
-                             'dividend_payout_common_stock',
-                             'dividend_payout_preferred_stock',
-                             'proceeds_from_issuance_of_common_stock',
-                             'proceeds_from_issuance_of_long_term_debt_and_capital_securities_net',
-                             'proceeds_from_issuance_of_preferred_stock',
-                             'proceeds_from_repurchase_of_equity',
-                             'proceeds_from_sale_of_treasury_stock',
-                             'change_in_cash_and_cash_equivalents',
-                             'change_in_exchange_rate',
-                             'net_income',
-                             'symbol', 'freq']
+                to_schema = {'reported_currency': np.dtype('str'),
+                             'operating_cashflow': np.dtype('float32'),
+                             'payments_for_operating_activities': np.dtype('float32'),
+                             'proceeds_from_operating_activities': np.dtype('float32'),
+                             'change_in_operating_liabilities': np.dtype('float32'),
+                             'change_in_operating_assets': np.dtype('float32'),
+                             'depreciation_depletion_and_amortization': np.dtype('float32'),
+                             'capital_expenditures': np.dtype('float32'),
+                             'change_in_receivables': np.dtype('float32'),
+                             'change_in_inventory': np.dtype('float32'),
+                             'profit_loss': np.dtype('float32'),
+                             'cashflow_from_investment': np.dtype('float32'),
+                             'cashflow_from_financing': np.dtype('float32'),
+                             'proceeds_from_repayments_of_short_term_debt': np.dtype('float32'),
+                             'payments_for_repurchase_of_common_stock': np.dtype('float32'),
+                             'payments_for_repurchase_of_equity': np.dtype('float32'),
+                             'payments_for_repurchase_of_preferred_stock': np.dtype('float32'),
+                             'dividend_payout': np.dtype('float32'),
+                             'dividend_payout_common_stock': np.dtype('float32'),
+                             'dividend_payout_preferred_stock': np.dtype('float32'),
+                             'proceeds_from_issuance_of_common_stock': np.dtype('float32'),
+                             'proceeds_from_issuance_of_long_term_debt_and_capital_securities_net': np.dtype('float32'),
+                             'proceeds_from_issuance_of_preferred_stock': np.dtype('float32'),
+                             'proceeds_from_repurchase_of_equity': np.dtype('float32'),
+                             'proceeds_from_sale_of_treasury_stock': np.dtype('float32'),
+                             'change_in_cash_and_cash_equivalents': np.dtype('float32'),
+                             'change_in_exchange_rate': np.dtype('float32'),
+                             'net_income': np.dtype('float32'),
+                             'symbol': np.dtype('str'),
+                             'freq': np.dtype('str')}
             elif function == 'EARNINGS':
                 schema = ['symbol', 'annualEarnings', 'quarterlyEarnings']
-                to_schema = ['reported_eps', 'symbol', 'freq', 'reported_date', 'estimated_eps', 'surprise', 'surprise_percentage']
+                to_schema = {'reported_eps': np.dtype('float32'),
+                             'symbol': np.dtype('str'),
+                             'freq': np.dtype('str'),
+                             'estimated_eps': np.dtype('float32'),
+                             'surprise': np.dtype('float32'),
+                             'surprise_percentage': np.dtype('float32')}
             else:
                 schema = ['Symbol', 'AssetType', 'Name', 'Description', 'CIK', 'Exchange', 'Currency', 'Country', 'Sector', 'Industry', 'Address',
                           'FiscalYearEnd', 'LatestQuarter', 'MarketCapitalization', 'EBITDA', 'PERatio', 'PEGRatio', 'BookValue', 'DividendPerShare', 'DividendYield',
@@ -699,13 +739,51 @@ class AdvantageStockGrepper:
                           'QuarterlyEarningsGrowthYOY', 'QuarterlyRevenueGrowthYOY', 'AnalystTargetPrice', 'TrailingPE', 'ForwardPE',
                           'PriceToSalesRatioTTM', 'PriceToBookRatio', 'EVToRevenue', 'EVToEBITDA', 'Beta', '52WeekHigh', '52WeekLow',
                           '50DayMovingAverage', '200DayMovingAverage', 'SharesOutstanding', 'DividendDate', 'ExDividendDate']
-                to_schema = ['symbol', 'asset_type','name', 'description', 'cik', 'exchange', 'currency', 'country', 'sector', 'industry', 'address',
-                             'fiscal_year_end', 'latest_quarter', 'market_capitalization', 'ebitda', 'pe_ratio', 'peg_ratio', 'book_value',
-                             'dividend_per_share', 'dividend_yield', 'eps', 'revenue_per_share_ttm', 'profit_margin',
-                             'operating_margin_ttm', 'return_on_assets_ttm', 'return_on_equity_ttm', 'revenue_ttm', 'gross_profit_ttm', 'diluted_eps_ttm',
-                             'quarterly_earnings_growth_yoy', 'quarterly_revenue_growth_yoy', 'analyst_target_price',
-                             'trailing_pe', 'forward_pe', 'price_to_sales_ratio_ttm', 'price_to_book_ratio', 'ev_to_revenue', 'ev_to_ebitda', 'beta',
-                             '52_week_high', '52_week_low', '50_day_moving_average', '200_day_moving_average', 'shares_outstanding', 'dividend_date', 'ex_dividend_date']
+                to_schema = {'symbol': np.dtype('str'),
+                             'asset_type': np.dtype('str'),
+                             'name': np.dtype('str'),
+                             'description': np.dtype('str'),
+                             'cik': np.dtype('str'),
+                             'exchange': np.dtype('str'),
+                             'currency': np.dtype('str'),
+                             'country': np.dtype('str'),
+                             'sector': np.dtype('str'),
+                             'industry': np.dtype('str'),
+                             'address': np.dtype('str'),
+                             'fiscal_year_end': np.dtype('str'),
+                             'market_capitalization': np.dtype('float32'),
+                             'ebitda': np.dtype('float32'),
+                             'pe_ratio': np.dtype('float32'),
+                             'peg_ratio': np.dtype('float32'),
+                             'book_value': np.dtype('float32'),
+                             'dividend_per_share': np.dtype('float32'),
+                             'dividend_yield': np.dtype('float32'),
+                             'eps': np.dtype('float32'),
+                             'revenue_per_share_ttm': np.dtype('float32'),
+                             'profit_margin': np.dtype('float32'),
+                             'operating_margin_ttm': np.dtype('float32'),
+                             'return_on_assets_ttm': np.dtype('float32'),
+                             'return_on_equity_ttm': np.dtype('float32'),
+                             'revenue_ttm': np.dtype('float32'),
+                             'gross_profit_ttm': np.dtype('float32'),
+                             'diluted_eps_ttm': np.dtype('float32'),
+                             'quarterly_earnings_growth_yoy': np.dtype('float32'),
+                             'quarterly_revenue_growth_yoy': np.dtype('float32'),
+                             'analyst_target_price': np.dtype('float32'),
+                             'trailing_pe': np.dtype('float32'),
+                             'forward_pe': np.dtype('float32'),
+                             'price_to_sales_ratio_ttm': np.dtype('float32'),
+                             'price_to_book_ratio': np.dtype('float32'),
+                             'ev_to_revenue': np.dtype('float32'),
+                             'ev_to_ebitda': np.dtype('float32'),
+                             'beta': np.dtype('float32'),
+                             '52_week_high': np.dtype('float32'),
+                             '52_week_low': np.dtype('float32'),
+                             '50_day_moving_average': np.dtype('float32'),
+                             '200_day_moving_average': np.dtype('float32'),
+                             'shares_outstanding': np.dtype('float32'),
+                             'dividend_date': np.dtype('datetime64[ns]'),
+                             'ex_dividend_date': np.dtype('datetime64[ns]')}
 
             url = self._construct_url(
                 function = function,
@@ -732,11 +810,12 @@ class AdvantageStockGrepper:
         else: ## EARNINGS_CALENDAR
             result = data
 
-        if function != 'OVERVIEW':
-            result.index = pd.to_datetime(result['fiscalDateEnding'])
-            result = result.drop(columns='fiscalDateEnding')
+        if function == 'OVERVIEW':
+            result.index = pd.to_datetime(result['latest_quarter'])
+            result = result.drop(columns='latest_quarter')
         else:
-            result.index = pd.Index([pd.Timestamp.now().date()])
+            result.index = pd.to_datetime(result['reportDate'])
+            result = result.drop(columns='reportDate')
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result = result.rename(columns={'diluted_epsttm': 'diluted_eps_ttm'}) ## special case that helper function cannot identify
         result.columns = result.columns.str.replace('non_', 'non', regex=False)
@@ -760,7 +839,13 @@ class AdvantageStockGrepper:
             state = state,
             apikey = self._api_key)
         schema = ['symbol', 'name', 'exchange', 'assetType', 'ipoDate', 'delistingDate', 'status']
-        to_schema = ['symbol', 'name', 'exchange', 'asset_type', 'ipo_date', 'delisting_date', 'status']
+        to_schema = {'symbol': np.dtype('str'),
+                     'name': np.dtype('str'),
+                     'exchange': np.dtype('str'),
+                     'asset_type': np.dtype('str'),
+                     'ipo_date': np.dtype('datetime64[ns]'),
+                     'delisting_date': np.dtype('datetime64[ns]'),
+                     'status': np.dtype('str')}
 
         result = pd.read_csv(url)
         self._check_args(result, url)
@@ -784,7 +869,7 @@ class AdvantageStockGrepper:
 
         url = self._construct_url(function = function, apikey = self._api_key)
         schema = ['symbol', 'name', 'ipoDate', 'priceRangeLow', 'priceRangeHigh', 'currency', 'exchange']
-        to_schema = ['symbol', 'name', 'ipo_date', 'price_range_low', 'price_range_high', 'currency', 'exchange']
+        to_schema = {'symbol': np.dtype('str'), 'name': np.dtype('str'), 'ipo_date': np.dtype('datetime64[ns]'), 'price_range_low': np.dtype('float64'), 'price_range_high': np.dtype('float64'), 'currency': np.dtype('str'), 'exchange': np.dtype('str')}
 
         result = pd.read_csv(url)
         self._check_args(result, url)
@@ -865,10 +950,10 @@ class AdvantageStockGrepper:
         if function in ['MAMA']:
             time_period = None
             schema = ['time', 'FAMA', 'MAMA']
-            to_schema = ['fama', 'mama']
+            to_schema = {'fama': np.dtype('float32'), 'mama': np.dtype('float32')}
         else:
             schema = ['time', function]
-            to_schema = [function.lower()]
+            to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -926,7 +1011,7 @@ class AdvantageStockGrepper:
 
         schema = ['time', function]
 
-        to_schema = [x.lower() for x in schema if x != 'time']
+        to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -1003,8 +1088,7 @@ class AdvantageStockGrepper:
             series_type = None
 
         schema = ['time', function]
-
-        to_schema = [x.lower() for x in schema if x != 'time']
+        to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -1059,8 +1143,7 @@ class AdvantageStockGrepper:
             slowperiod = None
 
         schema = ['time', function]
-
-        to_schema = [x.lower() for x in schema if x != 'time']
+        to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -1099,8 +1182,7 @@ class AdvantageStockGrepper:
         :return: Downloaded data frame.
         """
         schema = ['time', function]
-
-        to_schema = [x.lower() for x in schema if x != 'time']
+        to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,
@@ -1161,10 +1243,10 @@ class AdvantageStockGrepper:
 
         if function == 'HT_SINE':
             schema = ['time', 'LEAD SINE', 'SINE']
-            to_schema = ['lead_sine', 'sine']
+            to_schema = {'lead_sine': np.dtype('float32'), 'sine': np.dtype('float32')}
         else:
             schema = ['time', function]
-            to_schema = [x.lower() for x in schema if x != 'time']
+            to_schema = {function.lower(): np.dtype('float32')}
 
         url = self._construct_url(
             function = function,

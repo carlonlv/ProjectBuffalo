@@ -2,13 +2,13 @@
 This module contains models for trend predictor for time series.
 """
 
+import copy
 from math import ceil, floor
 from typing import Any, Literal, Tuple
 
 import pandas as pd
 import torch
 import torch.nn as nn
-import copy
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
