@@ -188,7 +188,7 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         if len(result.index) == 0:
-            return pd.DataFrame(columns=['open', 'high', 'low', 'close', 'volume'])
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         ## Postprocessing
         if 'time' in result.columns:
             result.index = pd.to_datetime(result['time'])
@@ -234,7 +234,7 @@ class AdvantageStockGrepper:
         self._check_args(data, url)
         self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result = pd.json_normalize(data)
         result.index = pd.to_datetime(result['Realtime Currency Exchange Rate.6. Last Refreshed'])
         result.index = result.index.tz_localize(timezone(result['Realtime Currency Exchange Rate.7. Time Zone'].iloc[0]))
@@ -285,7 +285,7 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         if len(result.index) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.index = pd.to_datetime(result['timestamp'], utc=True)
         result = result.drop(columns='timestamp')
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
@@ -334,7 +334,7 @@ class AdvantageStockGrepper:
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         if len(result.index) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.index = pd.to_datetime(result['timestamp'], utc=True)
         result = result.drop(columns='timestamp')
         result.columns = result.columns.str.replace(f' ({physical_symbol})', '', regex=False)
@@ -387,7 +387,7 @@ class AdvantageStockGrepper:
         self._check_args(data, url)
         self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
         result.index = pd.to_datetime(result['date'])
         result = result.drop(columns='date')
@@ -447,7 +447,7 @@ class AdvantageStockGrepper:
         self._check_args(data, url)
         self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
         result.index = pd.to_datetime(result['date'])
         result = result.drop(columns='date')
@@ -468,7 +468,7 @@ class AdvantageStockGrepper:
         schema = ['currency code', 'currency name']
         result = pd.read_csv(url)
         if len(result) == 0:
-            return pd.DataFrame(columns=schema)
+            return pd.DataFrame(columns=schema.keys(), dtype=schema.values())
         self._check_args(result, url)
         self._check_schema(result, url, schema)
         result.index = pd.Index([pd.Timestamp.now()])
@@ -566,7 +566,7 @@ class AdvantageStockGrepper:
         self._check_args(data, url)
         self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result = pd.json_normalize(data, record_path=['feed'], meta = ['items', 'sentiment_score_definition', 'relevance_score_definition'])
         result = result.reset_index(drop=False)
 
@@ -796,7 +796,7 @@ class AdvantageStockGrepper:
         self._check_args(data, url)
         self._check_schema(data, url, schema)
         if len(data) == 0:
-            return pd.DataFrame(columns=to_schema)
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         if function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'CASH_FLOW']:
             annual_data = pd.json_normalize(data, record_path='annualReports', meta='symbol').assign(freq = 'annual')
             quarterly_data = pd.json_normalize(data, record_path='quarterlyReports', meta='symbol').assign(freq = 'quarterly')
@@ -850,6 +850,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
         if date is None:
@@ -874,6 +876,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result.columns = result.columns.str.lower()
         self._check_schema(result, url, to_schema)
@@ -974,6 +978,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])
@@ -1025,6 +1031,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])
@@ -1110,6 +1118,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])
@@ -1157,6 +1167,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])
@@ -1195,6 +1207,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])
@@ -1263,6 +1277,8 @@ class AdvantageStockGrepper:
         result = pd.read_csv(url)
         self._check_args(result, url)
         self._check_schema(result, url, schema)
+        if len(result.index) == 0:
+            return pd.DataFrame(columns=to_schema.keys(), dtype=to_schema.values())
         result.columns = result.columns.str.lower()
         result.columns = result.columns.str.replace(r'\s', '_', regex=True)
         result.index = pd.to_datetime(result['time'])

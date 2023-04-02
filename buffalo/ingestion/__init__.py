@@ -7,6 +7,7 @@ import time
 import warnings
 from typing import List, Optional, Union
 
+import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
@@ -118,8 +119,12 @@ class DataIngestion:
             read_data = pd.read_sql_query('SELECT name FROM sqlite_master WHERE type="table"', conn)['name']
         else:
             read_data = pd.Series(table_names)
+        read_data = read_data[read_data != 'dtypes']
+        dtypes = pd.read_sql('SELECT * FROM dtypes', conn, index_col='column')
+        dtypes['dtype'] = dtypes['dtype'].apply(np.dtype)
         for tbl in read_data:
             self.data[tbl] = pd.read_sql(query_template.format(table=tbl), conn, index_col=load_index_from, parse_dates=load_index_from)
+            self.data[tbl].astype(dtypes[dtypes['table'] == tbl]['dtype'].to_dict())
         conn.close()
 
     def store_data(
@@ -143,6 +148,11 @@ class DataIngestion:
             write_data = {k: self.data[k] for k in data_names if k in self.data}
         create_parent_directory(file_path)
         conn = sqlite3.connect(file_path)
+        dtypes = pd.read_sql('SELECT * FROM dtypes', conn, index_col='column')
         for key, val in write_data.items():
             val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
+            if key in dtypes['table']:
+                dtypes = dtypes[dtypes['table'] != key]
+                dtypes = dtypes.append(val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'}))
+        dtypes.to_sql('dtypes', conn, if_exists='replace', index=True, index_label='column')
         conn.close()
