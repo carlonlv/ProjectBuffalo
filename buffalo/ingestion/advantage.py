@@ -811,8 +811,8 @@ class AdvantageStockGrepper:
             result = data
 
         if function == 'OVERVIEW':
-            result.index = pd.to_datetime(result['latest_quarter'])
-            result = result.drop(columns='latest_quarter')
+            result.index = pd.to_datetime(result['LatestQuarter'])
+            result = result.drop(columns='LatestQuarter')
         else:
             result.index = pd.to_datetime(result['reportDate'])
             result = result.drop(columns='reportDate')
