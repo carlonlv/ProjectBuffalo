@@ -124,7 +124,7 @@ class DataIngestion:
         dtypes['dtype'] = dtypes['dtype'].apply(np.dtype)
         for tbl in read_data:
             self.data[tbl] = pd.read_sql(query_template.format(table=tbl), conn, index_col=load_index_from, parse_dates=load_index_from)
-            self.data[tbl].astype(dtypes[dtypes['table'] == tbl]['dtype'].to_dict())
+            self.data[tbl] = self.data[tbl].astype(dtypes[dtypes['table'] == tbl]['dtype'].to_dict())
         conn.close()
 
     def store_data(
@@ -153,6 +153,6 @@ class DataIngestion:
             val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
             if key in dtypes['table']:
                 dtypes = dtypes[dtypes['table'] != key]
-                dtypes = dtypes.append(val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'}))
+            dtypes = dtypes.append(val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'}))
         dtypes.to_sql('dtypes', conn, if_exists='replace', index=True, index_label='column')
         conn.close()
