@@ -511,27 +511,7 @@ class AdvantageStockGrepper:
         :return: Downloaded data frame.
         """
         function = 'NEWS_SENTIMENT'
-
-        schema = ['item', 'sentiment_score_definition', 'relevance_score_definition', 'feed']
-        to_schema = ['items',
-                     'sentiment_score_definition',
-                     'relevance_score_definition',
-                     'title',
-                     'url',
-                     'authors',
-                     'summary',
-                     'banner_image',
-                     'source',
-                     'category_within_source',
-                     'source_domain',
-                     'topic',
-                     'topic_relevance_score',
-                     'overall_sentiment_score',
-                     'overall_sentiment_label',
-                     'ticker_relevance_score',
-                     'relevance_score',
-                     'ticker_sentiment_score',
-                     'ticker_sentiment_label']
+        schema = ['items', 'sentiment_score_definition', 'relevance_score_definition', 'feed']
         to_schema = {'items': np.dtype('str'),
                      'sentiment_score_definition': np.dtype('str'),
                      'relevance_score_definition': np.dtype('str'),
@@ -547,8 +527,8 @@ class AdvantageStockGrepper:
                      'topic_relevance_score': np.dtype('float32'),
                      'overall_sentiment_score': np.dtype('float32'),
                      'overall_sentiment_label': np.dtype('str'),
+                     'ticker': np.dtype('str'),
                      'ticker_relevance_score': np.dtype('float32'),
-                     'relevance_score': np.dtype('float32'),
                      'ticker_sentiment_score': np.dtype('float32'),
                      'ticker_sentiment_label': np.dtype('str')}
 
@@ -581,11 +561,11 @@ class AdvantageStockGrepper:
         topic_lst = pd.concat(topic_lst)
         ticker_lst = pd.concat(ticker_lst)
 
-        result = result.drop(columns=['topics', 'ticker_sentiment'])
+        result = result.drop(columns=['topics', 'ticker_sentiment', 'index'])
         result.index = pd.to_datetime(result['time_published'], utc=True)
-        result = result.drop(columns='time_published')
+        result.set_index('time_published', inplace=True)
         result = result.merge(topic_lst).merge(ticker_lst)
-        self._check_schema(data, url, to_schema)
+        self._check_schema(result, url, to_schema)
         return result
 
     def company_info_download(
