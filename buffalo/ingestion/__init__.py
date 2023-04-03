@@ -153,6 +153,6 @@ class DataIngestion:
             val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
             if key in dtypes['table']:
                 dtypes = dtypes[dtypes['table'] != key]
-            dtypes = dtypes.append(val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'}))
+            dtypes = pd.concat([dtypes, val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'})], axis=0)
         dtypes.to_sql('dtypes', conn, if_exists='replace', index=True, index_label='column')
         conn.close()
