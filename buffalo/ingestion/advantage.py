@@ -128,10 +128,12 @@ class AdvantageStockGrepper:
                 msg = ingested_result['Error Message']
             elif 'Note' in ingested_result:
                 msg = ingested_result['Note']
+            elif 'Information' in ingested_result:
+                msg = ingested_result['Information']
         else:
             msg = None
         if msg is not None:
-            if 'Invalid API call' in msg:
+            if 'Invalid API call' in msg or 'Invalid inputs' in msg:
                 raise ValueError(f'Invalid arguments passed from {url}.')
             elif 'unlock all premium endpoints' in msg:
                 raise PermissionError(f'Premium api key needed from {url}.')
@@ -561,10 +563,11 @@ class AdvantageStockGrepper:
         topic_lst = pd.concat(topic_lst)
         ticker_lst = pd.concat(ticker_lst)
 
-        result = result.drop(columns=['topics', 'ticker_sentiment', 'index'])
+        result = result.drop(columns=['topics', 'ticker_sentiment'])
         result.index = pd.to_datetime(result['time_published'], utc=True)
         result.set_index('time_published', inplace=True)
         result = result.merge(topic_lst).merge(ticker_lst)
+        result = result.drop(columns=['index'])
         self._check_schema(result, url, to_schema)
         return result
 
