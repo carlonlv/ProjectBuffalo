@@ -451,6 +451,7 @@ class AdvantageStockGrepper:
         result = pd.json_normalize(data, record_path=['data'], meta=['name', 'interval', 'unit'])
         result.index = pd.to_datetime(result['date'])
         result = result.drop(columns='date')
+        result = result.replace('.', np.nan, regex=False)
         self._check_schema(result, url, to_schema)
         return result
 
@@ -729,6 +730,7 @@ class AdvantageStockGrepper:
                 to_schema = {'reported_eps': np.dtype('float32'),
                              'symbol': np.dtype('str'),
                              'freq': np.dtype('str'),
+                             'reported_date': np.dtype('datetime64[ns]'),
                              'estimated_eps': np.dtype('float32'),
                              'surprise': np.dtype('float32'),
                              'surprise_percentage': np.dtype('float32')}
@@ -819,13 +821,15 @@ class AdvantageStockGrepper:
         elif function in ['INCOME_STATEMENT', 'BALANCE_SHEET', 'EARNINGS', 'CASH_FLOW']:
             result['fiscalDateEnding'] = pd.to_datetime(result['fiscalDateEnding'])
             result.set_index('fiscalDateEnding', inplace=True)
+            if function == 'EARNINGS':
+                result['reportedDate'] = pd.to_datetime(result['reportedDate'])
         else:
             result['reportDate'] = pd.to_datetime(result['reportDate'])
             result.set_index('reportDate', inplace=True)
         result.columns = ['_'.join(split_string_to_words(x)).lower() for x in result.columns]
         result = result.rename(columns={'diluted_epsttm': 'diluted_eps_ttm'}) ## special case that helper function cannot identify
         result.columns = result.columns.str.replace('non_', 'non', regex=False)
-        result = result.replace(r'None', pd.NA, regex=True)
+        result = result.replace(r'None', np.nan, regex=True)
         self._check_schema(result, url, to_schema)
         return result
 
