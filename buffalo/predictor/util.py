@@ -87,7 +87,10 @@ def align_dataframe_by_time(target_df: pd.DataFrame,
     else:
         other_df.index = other_df.index.tz_convert(target_df.index.tz)
         expire_time.iloc[0] = expire_time.iloc[0].tz_convert(target_df.index.tz)
-    other_df = other_df.reindex(target_df.index).sort_index().ffill()
+    missing_indices = target_df.index.difference(other_df.index)
+    if len(missing_indices) > 0:
+        other_df = pd.concat([other_df, pd.DataFrame(index=missing_indices)], axis=0, join='outer').sort_index().ffill()
+    other_df = other_df.reindex(target_df.index)
     other_df = other_df[other_df.index < expire_time.iloc[0]]
     result = pd.concat([target_df, other_df], axis=1, verify_integrity=True)
     result = result.dropna()
@@ -152,9 +155,9 @@ class TimeSeries:
         endog_array = torch.Tensor(self.endog.to_numpy())
         exog_array = torch.Tensor(self.exog.to_numpy())
         target_cols = torch.arange(0, endog_array.shape[1])
-        self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=0), self.seq_len, target_cols)
+        self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=1), self.seq_len, target_cols)
 
-    def get_splitted_dataset(self, train_ratio: Prob) -> List[Dataset]:
+    def get_traintest_splitted_dataloader(self, train_ratio: Prob, batch_size: PositiveInt) -> List[Dataset]:
         """
         Return splitted data set into training set, testing set and validation set.
 
@@ -163,28 +166,9 @@ class TimeSeries:
         :param include_valid: Whether to split validation set, the remainder from train_ratio and test_ratio is used.
         :return: Splitted datasets.
         """
-        train_size = int(self.dataset.shape[0] * train_ratio)
-        test_size = self.dataset.shape[0] - train_size
+        train_size = int(len(self.dataset) * train_ratio)
+        test_size = len(self.dataset) - train_size
         splitted_size = [train_size, test_size]
 
-        return random_split(self.dataset, splitted_size)
-
-    def get_dataset_loader(
-            self,
-            splitted_dataset: List[Dataset],
-            batch_sizes: Union[PositiveInt, List[PositiveInt]]):
-        """
-        Return dataset loader for training set, testing set and validation set.
-
-        :param splitted_dataset: Returned value from get_splitted_dataset.
-        :param batch_sizes: Can be a single value or a list of values. If a list of values is provided, each of the value is mapped to the Dataset from splitted_dataset.
-        """
-        if isinstance(batch_sizes, list):
-            assert len(batch_sizes) == len(splitted_dataset)
-        else:
-            batch_sizes = [batch_sizes] * len(splitted_dataset)
-
-        return [DataLoader(x,
-                           batch_sizes[i],
-                           pin_memory=self.pin_memory,
-                           pin_memory_device=self.pin_memory_device) for i, x in enumerate(splitted_dataset)]
+        trainset, testset= random_split(self.dataset, splitted_size)
+        return DataLoader(trainset, batch_size, pin_memory=self.pin_memory, pin_memory_device=self.pin_memory_device), DataLoader(testset, batch_size, pin_memory=self.pin_memory, pin_memory_device=self.pin_memory_device)
