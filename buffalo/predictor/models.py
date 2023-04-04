@@ -241,7 +241,7 @@ class LSTM(nn.Module):
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*3, out_features=output_size).to(self.device)
 
-    def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None, c_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+    def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Forward pass of input data and hidden state from previous cell.
 
@@ -250,30 +250,6 @@ class LSTM(nn.Module):
         :param input_v: tensor of shape (L, H_in) for unbatched input, or (N, L, H_in) when batched, containing the features of the input sequence. The input can also be a packed variable length sequence.
         :param h_0: tensor of shape (D * num_layers, H_out) for unbatched output or (D * num_layers, N, H_out) containing the initial hidden state for the input sequence batch. Defaults to zeros if (h_0, c_0) not provided.
         :param c_0: tensor of shape (D * num_layers, H_cell) for unbatched output or (D * num_layers, N, H_cell) containing the initial cell state for the input sequence batch. Defaults to zeros if (h_0, c_0) not provided.
-        """
-        h_in = input_v.shape[-1]
-        seq_len = input_v.shape[-2]
-        if len(input_v.shape) == 2:
-            ## Unbatched
-            batch_num = 1
-        else:
-            batch_num = input_v.shape[0]
-        input_v = input_v.view(batch_num, h_in * seq_len) ## Per time, per series batch normalization
-        input_v = self.batch_norm(input_v)
-        input_v = input_v.view(batch_num, seq_len, h_in)
-        if batch_num == 1:
-            input_v = input_v.squeeze(0)
-        return self.model(input_v, (h_0, c_0))
-
-    def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Forward pass of input data and hidden state from previous cell.
-
-        Let N = batch size, L = sequence length, D = 2 if bidirectional otherwise 1, H_in = input size, H_out = output size.
-
-        :param input_v: tensor of shape (N, L, H_in) when batched, containing the features of the input sequence. The input can also be a packed variable length sequence.
-        :param h_0: tensor of shape (D * num_layers, N, H_out) containing the initial hidden state for the input sequence batch. Defaults to zeros if not provided.
-        :return: output: tensor of shape (N, L, D * H_out) when batched, containing the output features h_t from the last layer of the RNN, for each t. h_n: tensor of shape (N, D * num_layers, H_out) containing the hidden state for t = L.
         """
         batch_num = input_v.shape[0]
         input_v = input_v.reshape(batch_num, self.seq_len * self.input_size)
