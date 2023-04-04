@@ -2,13 +2,13 @@
 This module contains helper functions to manipulate predictors.
 """
 
-from typing import List, Optional, Union
+from typing import List, Optional
 from warnings import warn
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import DataLoader, Dataset, random_split
+from torch.utils.data import Dataset, random_split
 
 from ..utility import PositiveInt, Prob
 from .seasonality import ChisquaredtestSeasonalityDetection
@@ -129,10 +129,7 @@ class TimeSeries:
             self,
             endog: pd.DataFrame,
             exog: Optional[pd.DataFrame],
-            seq_len: PositiveInt,
-            batch_size: PositiveInt,
-            pin_memory: bool,
-            pin_memory_device: str) -> None:
+            seq_len: PositiveInt) -> None:
         """
         Intialize time series data.
 
@@ -148,27 +145,21 @@ class TimeSeries:
         self.endog = endog.sort_index(ascending=True)
         self.exog = exog.sort_index(ascending=True)
         self.seq_len = seq_len
-        self.batch_size = batch_size
-        self.pin_memory = pin_memory
-        self.pin_memory_device = pin_memory_device
 
         endog_array = torch.Tensor(self.endog.to_numpy())
         exog_array = torch.Tensor(self.exog.to_numpy())
         target_cols = torch.arange(0, endog_array.shape[1])
         self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=1), self.seq_len, target_cols)
 
-    def get_traintest_splitted_dataloader(self, train_ratio: Prob, batch_size: PositiveInt) -> List[Dataset]:
+    def get_traintest_splitted_dataset(self, train_ratio: Prob) -> List[Dataset]:
         """
         Return splitted data set into training set, testing set and validation set.
 
         :param train_ratio: A positive float from 0 to 1.
-        :param test_ratio: A positive float from 0 to 1.
-        :param include_valid: Whether to split validation set, the remainder from train_ratio and test_ratio is used.
         :return: Splitted datasets.
         """
         train_size = int(len(self.dataset) * train_ratio)
         test_size = len(self.dataset) - train_size
         splitted_size = [train_size, test_size]
 
-        trainset, testset= random_split(self.dataset, splitted_size)
-        return DataLoader(trainset, batch_size, pin_memory=self.pin_memory, pin_memory_device=self.pin_memory_device), DataLoader(testset, batch_size, pin_memory=self.pin_memory, pin_memory_device=self.pin_memory_device)
+        return random_split(self.dataset, splitted_size)
