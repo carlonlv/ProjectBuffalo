@@ -51,19 +51,20 @@ def train_model(model: nn.Module,
         fold_size = floor(len(trainset) * validation_ratio)
         if multi_fold_valiation:
             n_folds = ceil(1 / validation_ratio)
-            train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
+            train_indices = [set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
         else:
             n_folds = 1
             train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
-
     train_record = []
+
     for train_indice in tqdm(train_indices, desc='Multi-fold validation'):
+        valid_indice = all_indices - train_indice
         for epoch in tqdm(range(epochs), desc='Epoch'):
             t_loss_sum = 0
             v_loss_sum = 0
 
             train_set = Subset(trainset, list(train_indice))
-            valid_set = Subset(trainset, list(all_indices - train_indice))
+            valid_set = Subset(trainset, list(valid_indice))
             train_loader = DataLoader(train_set, **dataloader_args)
             valid_loader = DataLoader(valid_set, **dataloader_args)
 
@@ -96,21 +97,21 @@ def train_model(model: nn.Module,
                         v_loss_sum += loss.item()
 
             curr_record = pd.Series({
-                'train_start': min(train_indice),
-                'train_end': max(train_indice),
+                'valid_start': min(valid_indice),
+                'valid_end': max(valid_indice),
                 'epoch': epoch,
                 'training_loss': t_loss_sum / len(train_set),
                 'validation_loss': v_loss_sum / len(valid_set)
             })
             train_record.append(curr_record)
 
-            if verbose and (epoch % 5 == 0):
+            if verbose and epoch % 5 == 0:
                 print(concat_dict(curr_record.to_dict()))
 
     if save_model:
         create_parent_directory(save_path)
         torch.save(model.state_dict(), save_path)
-    return train_record
+    return pd.concat(train_record, axis=0, ignore_index=True)
 
 def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_args):
     """

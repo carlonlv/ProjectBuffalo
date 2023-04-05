@@ -248,7 +248,7 @@ class IterativeTtestOutlierDetection:
         Initializer and configuration for IterativeTtestOutlierDetection.
 
         :param cval: The critical value to determine the significance of each type of outlier. If no value is specified for argument cval a default value based on the sample size is used. Let nn be the number of observations. If n is less or equal to 50, then cval is set equal to 3.0; If n is greater or equal to 450, then cval is set equal to 4.0; otherwise cval is set equal to $3 + 0.0025 * (n - 50)3 + 0.0025 * (n - 50)$.
-        :param types: A character list indicating the type of outlier to be considered by the detection procedure: innovational outliers ("IO"), additive outliers ("AO"), level shifts ("LS"), temporary changes ("TC") and seasonal level shifts ("SLS"). If None is provided, then a list of 'AO', 'LS', 'TC' is used.
+        :param types: A character list indicating the type of outlier to be considered by the detection procedure: innovational outliers ("IO"), additive outliers ("AO"), level shifts ("LS"), temporary changes ("TC") and seasonal level shifts ("SLS"). If None is provided, then a list of 'AO', 'TC' is used.
         :param maxit: The maximum number of iterations.
         :param maxit_iloop: The maximum number of iterations in the inner loop. See locate_outliers.
         :param maxit_oloop: The maximum number of iterations in the outer loop.
@@ -549,7 +549,7 @@ class IterativeTtestOutlierDetection:
                 result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
                 ids.append('ol_id_' + temp_df['id'].astype(str))
         result = np.concatenate(result, axis=1)
-        result = pd.DataFrame(result, columns=ids, index=range(resid.shape[0]))
+        result = pd.DataFrame(result, columns=pd.concat(ids), index=range(resid.shape[0]))
         result = result['ol_id_' + located_ol['id'].astype('str')]
         return result
 
@@ -625,9 +625,8 @@ class IterativeTtestOutlierDetection:
                 else:
                     result.append(xreg_stc(indices=temp_df['t_index'].to_numpy() - self.trend_offset, weights=temp_df['coefhat'].to_numpy(), delta=ol_type[1]))
                 ids.append('ol_id_' + temp_df['id'].astype(str))
-
         result = np.concatenate(result, axis=1)
-        result = pd.DataFrame(result, columns=ids, index=range(endog.shape[0]))
+        result = pd.DataFrame(result, columns=pd.concat(ids), index=range(endog.shape[0]))
         result = result['ol_id_' + located_ol['id'].astype('str')]
         return result
 
