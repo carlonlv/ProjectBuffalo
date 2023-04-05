@@ -4,6 +4,7 @@ This module contains models for trend predictor for time series.
 
 from math import ceil, floor
 from typing import Any, Literal, Optional, Tuple
+from warnings import warn
 
 import pandas as pd
 import torch
@@ -18,7 +19,7 @@ from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob,
 def train_model(model: nn.Module,
                 optimizer: Any,
                 loss_func: Any,
-                trainset: Dataset,
+                trainset: Optional[Dataset],
                 validation_ratio: Prob,
                 epochs: PositiveInt,
                 clip_grad: Optional[PositiveFlt]=None,
@@ -26,7 +27,7 @@ def train_model(model: nn.Module,
                 verbose: bool=True,
                 save_model: bool=False,
                 save_path: Optional[str]=None,
-                **dataloader_args):
+                **dataloader_args) -> pd.DataFrame:
     """
     Train the model.
 
@@ -44,6 +45,11 @@ def train_model(model: nn.Module,
     :param dataloader_args: The arguments for the data loader.
     :return: The training record.
     """
+    if trainset is None:
+        trainset_not_provided = True
+        trainset = model.train_set
+    else:
+        trainset_not_provided = False
     all_indices = set(range(len(trainset)))
     if validation_ratio == 0:
         train_indices = [all_indices]
@@ -55,10 +61,16 @@ def train_model(model: nn.Module,
         else:
             n_folds = 1
             train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
-    train_record = []
 
-    for train_indice in tqdm(train_indices, desc='Multi-fold validation'):
+    train_record = []
+    train_resid = []
+    train_model_params = []
+    train_valid_loss = []
+    for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation'):
         valid_indice = all_indices - train_indice
+        curr_resid = torch.full((len(trainset),), float('nan'), device=model.device) ## Initalize the residuals to be nan
+        if not trainset_not_provided:
+            model.load_state_dict(model.init_state_dict) ## Reset the model parameters
         for epoch in tqdm(range(epochs), desc='Epoch'):
             t_loss_sum = 0
             v_loss_sum = 0
@@ -72,13 +84,14 @@ def train_model(model: nn.Module,
             for batch in tqdm(train_loader, desc='Batched training'):
                 optimizer.zero_grad()
 
-                data, label = batch
+                data, label, index = batch
                 data = data.to(model.device)
                 label = label.to(model.device)
                 outputs = model(data)
                 pred = outputs
 
                 loss = loss_func(pred, label)
+                curr_resid[index] = label - pred
                 loss.backward()
                 if clip_grad is not None:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
@@ -88,7 +101,7 @@ def train_model(model: nn.Module,
             if len(valid_set) > 0:
                 with torch.no_grad():
                     for batch in valid_loader:
-                        data, label = batch
+                        data, label, index = batch
                         data = data.to(model.device)
                         label = label.to(model.device)
                         pred = model(data)
@@ -97,6 +110,7 @@ def train_model(model: nn.Module,
                         v_loss_sum += loss.item()
 
             curr_record = pd.Series({
+                'fold': fold,
                 'valid_start': min(valid_indice),
                 'valid_end': max(valid_indice),
                 'epoch': epoch,
@@ -104,13 +118,24 @@ def train_model(model: nn.Module,
                 'validation_loss': v_loss_sum / len(valid_set)
             })
             train_record.append(curr_record)
+            train_model_params.append(model.state_dict())
+            train_resid.append(pd.Series(curr_resid.cpu().numpy()))
+            train_valid_loss.append(curr_record['validation_loss'])
 
             if verbose and epoch % 5 == 0:
                 print(concat_dict(curr_record.to_dict()))
 
+    ## Find the best validation loss
+    best_fold = train_valid_loss.index(min(train_valid_loss))
+    model.load_state_dict(train_model_params[best_fold])
+    if not trainset_not_provided:
+        model.store_training_info(Subset(trainset, list(train_indices[best_fold])), train_record=train_record[best_fold], train_resid=train_resid[best_fold])
+    else:
+        model.update_training_record(record=train_record[best_fold], append=True)
+        model.update_training_resid(resid=train_resid[best_fold])
     if save_model:
         create_parent_directory(save_path)
-        torch.save(model.state_dict(), save_path)
+        torch.save(model, save_path)
     return pd.concat(train_record, axis=0, ignore_index=True)
 
 def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_args):
@@ -123,14 +148,16 @@ def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_
     """
     test_data_loader = DataLoader(testset, **dataloader_args)
     test_loss = 0
+    test_resid = torch.full((len(testset),), float('nan'), device=model.device)
     for batch in tqdm(test_data_loader, desc='Batched testing'):
-        data, label = batch
+        data, label, index = batch
         data = data.to(model.device)
         label = label.to(model.device)
         pred = model(data)
-
+        test_resid[index] = label - pred
         loss = loss_func(pred, label)
         test_loss += loss.item()
+    test_resid = pd.Series(test_resid.cpu().numpy())
     print(f'Test loss: {test_loss / len(testset)}')
     return test_loss / len(testset)
 
@@ -176,6 +203,10 @@ class RNN(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*2, out_features=output_size).to(self.device)
+        self.train_set = None
+        self.train_record = pd.DataFrame()
+        self.train_resid = pd.Series()
+        self.init_state_dict = self.state_dict()
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -197,6 +228,39 @@ class RNN(nn.Module):
         output_v = torch.cat((output_v, hidden_v), dim=1)
         return self.f_c(output_v)
 
+    def store_training_info(self, train_set: Dataset, train_record: pd.DataFrame, train_resid: pd.Series):
+        """Store the provided training and testing information
+
+        :param train_set: The training dataset.
+        :param train_record: The training record.
+        :param train_resid: The training residuals.
+        """
+        self.train_set = train_set
+        self.train_record = train_record
+        self.train_resid = train_resid
+
+    def update_training_record(self, record: pd.DataFrame, append: bool=True):
+        """Update the provided training record, must only be used when training set is not changed,
+
+        :param record: The training record to be stored.
+        :param append: If True, append the record to the existing record. Otherwise, replace the existing record. Default: True.
+        """
+        if record['epoch'].min() != 0:
+            warn('Epoch number does not start from zero. This may cause unexpected behavior.')
+
+        if not append:
+            self.train_record = record
+        else:
+            max_epoch = self.train_record['epoch'].max() + 1
+            record['epoch'] = record['epoch'] - record['epoch'].min() + max_epoch
+            self.train_record = pd.concat([self.train_record, record], axis=0)
+
+    def update_training_resid(self, resid: pd.Series):
+        """Update the provided training record. , must only be used when training set is not changed,
+
+        :param record: The training record to be stored.
+        """
+        self.train_resid = self.train_resid.combine_first(resid)
 
 class LSTM(nn.Module):
     """
