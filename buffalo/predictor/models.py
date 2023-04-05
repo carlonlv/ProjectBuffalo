@@ -9,7 +9,7 @@ from warnings import warn
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from tqdm.notebook import tqdm
 
 from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob,
@@ -62,6 +62,7 @@ def train_model(model: nn.Module,
             n_folds = 1
             train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
 
+    model.init_state_dict = model.state_dict()
     train_record = []
     train_resid = []
     train_model_params = []
@@ -69,8 +70,7 @@ def train_model(model: nn.Module,
     for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation'):
         valid_indice = all_indices - train_indice
         curr_resid = torch.full((len(trainset),), float('nan'), device=model.device) ## Initalize the residuals to be nan
-        if not trainset_not_provided:
-            model.load_state_dict(model.init_state_dict) ## Reset the model parameters
+        model.load_state_dict(model.init_state_dict) ## Reset the model parameters
         for epoch in tqdm(range(epochs), desc='Epoch'):
             t_loss_sum = 0
             v_loss_sum = 0
@@ -128,11 +128,9 @@ def train_model(model: nn.Module,
     ## Find the best validation loss
     best_fold = train_valid_loss.index(min(train_valid_loss))
     model.load_state_dict(train_model_params[best_fold])
-    if not trainset_not_provided:
-        model.store_training_info(Subset(trainset, list(train_indices[best_fold])), train_record=train_record[best_fold], train_resid=train_resid[best_fold])
-    else:
-        model.update_training_record(record=train_record[best_fold], append=True)
-        model.update_training_resid(resid=train_resid[best_fold])
+    model.update_training_info(train_indices[best_fold], append=trainset_not_provided)
+    model.update_training_record(record=train_record[best_fold], append=trainset_not_provided)
+    model.update_training_resid(resid=train_resid[best_fold], append=trainset_not_provided)
     if save_model:
         create_parent_directory(save_path)
         torch.save(model, save_path)
@@ -203,7 +201,7 @@ class RNN(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*2, out_features=output_size).to(self.device)
-        self.train_set = None
+        self.train_set = Dataset()
         self.train_record = pd.DataFrame()
         self.train_resid = pd.Series()
         self.init_state_dict = self.state_dict()
@@ -228,19 +226,18 @@ class RNN(nn.Module):
         output_v = torch.cat((output_v, hidden_v), dim=1)
         return self.f_c(output_v)
 
-    def store_training_info(self, train_set: Dataset, train_record: pd.DataFrame, train_resid: pd.Series):
-        """Store the provided training and testing information
+    def update_training_set(self, train_set: Dataset, append: bool=True):
+        """Update the provided training set.
 
         :param train_set: The training dataset.
-        :param train_record: The training record.
-        :param train_resid: The training residuals.
         """
-        self.train_set = train_set
-        self.train_record = train_record
-        self.train_resid = train_resid
+        if append:
+            self.train_set = ConcatDataset([self.train_set, train_set])
+        else:
+            self.train_set = train_set
 
     def update_training_record(self, record: pd.DataFrame, append: bool=True):
-        """Update the provided training record, must only be used when training set is not changed,
+        """Update the provided training record.
 
         :param record: The training record to be stored.
         :param append: If True, append the record to the existing record. Otherwise, replace the existing record. Default: True.
@@ -255,12 +252,16 @@ class RNN(nn.Module):
             record['epoch'] = record['epoch'] - record['epoch'].min() + max_epoch
             self.train_record = pd.concat([self.train_record, record], axis=0)
 
-    def update_training_resid(self, resid: pd.Series):
-        """Update the provided training record. , must only be used when training set is not changed,
+    def update_training_resid(self, resid: pd.Series, append: bool=True):
+        """Update the provided training record.
 
         :param record: The training record to be stored.
+        :param append: If True, append the record to the existing record. Otherwise, replace the existing record. Default: True.
         """
-        self.train_resid = self.train_resid.combine_first(resid)
+        if not append:
+            self.train_resid = resid
+        else:
+            self.train_resid = self.train_resid.combine_first(resid)
 
 class LSTM(nn.Module):
     """
