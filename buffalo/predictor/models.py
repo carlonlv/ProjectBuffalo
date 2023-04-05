@@ -2,18 +2,18 @@
 This module contains models for trend predictor for time series.
 """
 
+from copy import deepcopy
 from math import ceil, floor
 from typing import Any, Literal, Optional, Tuple
-from warnings import warn
 
+import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
-from tqdm.notebook import tqdm
+from tqdm.auto import tqdm
 
-from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob,
-                       concat_dict, create_parent_directory)
+from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob, create_parent_directory)
 
 
 def train_model(model: nn.Module,
@@ -24,7 +24,7 @@ def train_model(model: nn.Module,
                 epochs: PositiveInt,
                 clip_grad: Optional[PositiveFlt]=None,
                 multi_fold_valiation: bool=False,
-                verbose: bool=True,
+                # verbose: bool=True,
                 save_model: bool=False,
                 save_path: Optional[str]=None,
                 **dataloader_args) -> pd.DataFrame:
@@ -39,7 +39,6 @@ def train_model(model: nn.Module,
     :param epochs: The number of epochs.
     :param clip_grad: The maximum gradient norm to be clipped. If None, then no gradient clipping is performed.
     :param multi_fold_valiation: Whether to use multifold validation. If false and the validation ratio is positive, then only one validation set is used.
-    :param verbose: Whether to print the training process.
     :param save_model: Whether to save the trained model to file.
     :param save_path: Which filepath to save the trained model.
     :param dataloader_args: The arguments for the data loader.
@@ -57,21 +56,21 @@ def train_model(model: nn.Module,
         fold_size = floor(len(trainset) * validation_ratio)
         if multi_fold_valiation:
             n_folds = ceil(1 / validation_ratio)
-            train_indices = [set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
+            train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
         else:
             n_folds = 1
-            train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
+            train_indices = [all_indices - set(range(0, min(fold_size, len(trainset) - 1)))]
 
-    model.init_state_dict = model.state_dict()
+    init_state_dict = deepcopy(model.state_dict())
     train_record = []
     train_resid = []
     train_model_params = []
     train_valid_loss = []
-    for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation'):
+    for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation', position=0, leave=True, total=len(train_indices)):
         valid_indice = all_indices - train_indice
-        curr_resid = torch.full((len(trainset),), float('nan'), device=model.device) ## Initalize the residuals to be nan
-        model.load_state_dict(model.init_state_dict) ## Reset the model parameters
-        for epoch in tqdm(range(epochs), desc='Epoch'):
+        curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
+        model.load_state_dict(init_state_dict) ## Reset the model parameters
+        for epoch in tqdm(range(epochs), desc='Epoch', position=1, leave=True):
             t_loss_sum = 0
             v_loss_sum = 0
 
@@ -81,7 +80,7 @@ def train_model(model: nn.Module,
             valid_loader = DataLoader(valid_set, **dataloader_args)
 
             ## Train Procedure
-            for batch in tqdm(train_loader, desc='Batched training'):
+            for batch in train_loader:
                 optimizer.zero_grad()
 
                 data, label, index = batch
@@ -91,7 +90,7 @@ def train_model(model: nn.Module,
                 pred = outputs
 
                 loss = loss_func(pred, label)
-                curr_resid[index] = label - pred
+                curr_resid = curr_resid.combine_first(pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy()))
                 loss.backward()
                 if clip_grad is not None:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
@@ -117,24 +116,26 @@ def train_model(model: nn.Module,
                 'training_loss': t_loss_sum / len(train_set),
                 'validation_loss': v_loss_sum / len(valid_set)
             })
-            train_record.append(curr_record)
-            train_model_params.append(model.state_dict())
-            train_resid.append(pd.Series(curr_resid.cpu().numpy()))
-            train_valid_loss.append(curr_record['validation_loss'])
 
-            if verbose and epoch % 5 == 0:
-                print(concat_dict(curr_record.to_dict()))
+            train_record.append(curr_record)
+
+            # if verbose and epoch % 5 == 0:
+            #     print(concat_dict(curr_record.to_dict()))
+
+        train_valid_loss.append(curr_record['validation_loss'])
+        train_model_params.append(deepcopy(model.state_dict()))
+        train_resid.append(curr_resid)
 
     ## Find the best validation loss
     best_fold = train_valid_loss.index(min(train_valid_loss))
     model.load_state_dict(train_model_params[best_fold])
-    model.update_training_info(train_indices[best_fold], append=trainset_not_provided)
-    model.update_training_record(record=train_record[best_fold], append=trainset_not_provided)
-    model.update_training_resid(resid=train_resid[best_fold], append=trainset_not_provided)
+    train_record = pd.concat([x.to_frame().T for x in train_record], ignore_index=True)
+    update_training_records(model, train_record, Subset(trainset, list(train_indices[best_fold])) if not trainset_not_provided else Dataset(), train_resid[best_fold], trainset_not_provided)
     if save_model:
         create_parent_directory(save_path)
         torch.save(model, save_path)
-    return pd.concat(train_record, axis=0, ignore_index=True)
+    print(f'Averaged validation loss: {np.mean(train_valid_loss)}. Best validation loss: {min(train_valid_loss)}')
+    return train_record
 
 def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_args):
     """
@@ -142,22 +143,43 @@ def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_
 
     :param model: The model.
     :param data_loader: The test set DataLoader.
-    :param verbose: If True, print the test result. Default: True.
+    :return: The test residuals.
     """
     test_data_loader = DataLoader(testset, **dataloader_args)
     test_loss = 0
-    test_resid = torch.full((len(testset),), float('nan'), device=model.device)
+    test_resid = pd.Series(dtype='float32')
     for batch in tqdm(test_data_loader, desc='Batched testing'):
         data, label, index = batch
         data = data.to(model.device)
         label = label.to(model.device)
         pred = model(data)
-        test_resid[index] = label - pred
+        test_resid = test_resid.combine_first(pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy()))
         loss = loss_func(pred, label)
         test_loss += loss.item()
-    test_resid = pd.Series(test_resid.cpu().numpy())
     print(f'Test loss: {test_loss / len(testset)}')
-    return test_loss / len(testset)
+    return test_resid
+
+def update_training_records(model: nn.Module, train_record: pd.DataFrame, train_set: Dataset, train_resid: pd.Series, append: bool=True):
+    """
+    Update the training records of the model.
+
+    :param model: The model where training info are stored to.
+    :param train_record: The training record generated by train_model function.
+    :param train_set: The training set used by train_model function.
+    :param train_resid: The training residuals generated by train_model function.
+    :param append: If True, append the training info to the existing training info. Default: True.
+    """
+    if append:
+        model.train_set = ConcatDataset([model.train_set, train_set])
+        max_epoch = model.train_record['epoch'].max() + 1
+        train_record['epoch'] = train_record['epoch'] - train_record['epoch'].min() + max_epoch
+        model.train_record = pd.concat([model.train_record, train_record], axis=0)
+        model.train_resid = model.train_resid.combine_first(train_resid)
+    else:
+        model.train_set = train_set
+        model.train_record = train_record
+        model.train_resid = train_resid
+
 
 class RNN(nn.Module):
     """
@@ -198,13 +220,13 @@ class RNN(nn.Module):
         self.output_size = output_size
         self.hidden_size = hidden_size
         self.seq_len = seq_len
+        self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
-        self.f_c = nn.Linear(in_features=hidden_size*2, out_features=output_size).to(self.device)
+        self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
         self.train_set = Dataset()
         self.train_record = pd.DataFrame()
-        self.train_resid = pd.Series()
-        self.init_state_dict = self.state_dict()
+        self.train_resid = pd.Series(dtype='float32')
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -222,46 +244,10 @@ class RNN(nn.Module):
         input_v = input_v.reshape(batch_num, self.seq_len, self.input_size)
         output_v, hidden_v = self.model(input_v, h_0)
         output_v = output_v[:, -1, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-1]  # Select last hidden state
+        hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1)  # Select last layer hidden state
         output_v = torch.cat((output_v, hidden_v), dim=1)
         return self.f_c(output_v)
 
-    def update_training_set(self, train_set: Dataset, append: bool=True):
-        """Update the provided training set.
-
-        :param train_set: The training dataset.
-        """
-        if append:
-            self.train_set = ConcatDataset([self.train_set, train_set])
-        else:
-            self.train_set = train_set
-
-    def update_training_record(self, record: pd.DataFrame, append: bool=True):
-        """Update the provided training record.
-
-        :param record: The training record to be stored.
-        :param append: If True, append the record to the existing record. Otherwise, replace the existing record. Default: True.
-        """
-        if record['epoch'].min() != 0:
-            warn('Epoch number does not start from zero. This may cause unexpected behavior.')
-
-        if not append:
-            self.train_record = record
-        else:
-            max_epoch = self.train_record['epoch'].max() + 1
-            record['epoch'] = record['epoch'] - record['epoch'].min() + max_epoch
-            self.train_record = pd.concat([self.train_record, record], axis=0)
-
-    def update_training_resid(self, resid: pd.Series, append: bool=True):
-        """Update the provided training record.
-
-        :param record: The training record to be stored.
-        :param append: If True, append the record to the existing record. Otherwise, replace the existing record. Default: True.
-        """
-        if not append:
-            self.train_resid = resid
-        else:
-            self.train_resid = self.train_resid.combine_first(resid)
 
 class LSTM(nn.Module):
     """
@@ -274,7 +260,6 @@ class LSTM(nn.Module):
                  output_size: PositiveInt,
                  seq_len: PositiveInt,
                  num_layers: PositiveInt=1,
-                 nonlinearity: Literal['tanh', 'relu']='tanh',
                  bias: bool=True,
                  dropout: Prob=0,
                  bidirectional: bool=False,
@@ -288,7 +273,6 @@ class LSTM(nn.Module):
         :param output_size: The number of features in the output.
         :param seq_len: The length of the sequence.
         :param num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results. Default: 1.
-        :param nonlinearity: The non-linearity to use. Can be either 'tanh' or 'relu'. Default: 'tanh'.
         :param bias: If False, then the layer does not use bias weights b_ih and b_hh. Default: True.
         :param dropout: If non-zero, introduces a Dropout layer on the outputs of each RNN layer except the last layer, with dropout probability equal to dropout. Default: 0.
         :param bidirectional: If True, becomes a bidirectional RNN. Default: False.
@@ -304,8 +288,11 @@ class LSTM(nn.Module):
         self.hidden_size = hidden_size
         self.seq_len = seq_len
         self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
-        self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
-        self.f_c = nn.Linear(in_features=hidden_size*3, out_features=output_size).to(self.device)
+        self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
+        self.f_c = nn.Linear(in_features=input_size + hidden_size*2+(proj_size if proj_size > 0 else hidden_size), out_features=output_size).to(self.device)
+        self.train_set = Dataset()
+        self.train_record = pd.DataFrame()
+        self.train_resid = pd.Series(dtype='float32')
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
