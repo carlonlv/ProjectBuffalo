@@ -13,7 +13,8 @@ import torch.nn as nn
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from tqdm.auto import tqdm
 
-from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob, create_parent_directory)
+from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob,
+                       create_parent_directory)
 
 
 def train_model(model: nn.Module,
@@ -68,63 +69,62 @@ def train_model(model: nn.Module,
     train_valid_loss = []
     for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation', position=0, leave=True, total=len(train_indices)):
         valid_indice = all_indices - train_indice
-        curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
         model.load_state_dict(init_state_dict) ## Reset the model parameters
-        for epoch in tqdm(range(epochs), desc='Epoch', position=1, leave=True):
-            t_loss_sum = 0
-            v_loss_sum = 0
+        with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
+            for epoch in range(epochs):
+                curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
+                t_loss_sum = 0
+                v_loss_sum = 0
 
-            train_set = Subset(trainset, list(train_indice))
-            valid_set = Subset(trainset, list(valid_indice))
-            train_loader = DataLoader(train_set, **dataloader_args)
-            valid_loader = DataLoader(valid_set, **dataloader_args)
+                train_set = Subset(trainset, list(train_indice))
+                valid_set = Subset(trainset, list(valid_indice))
+                train_loader = DataLoader(train_set, **dataloader_args)
+                valid_loader = DataLoader(valid_set, **dataloader_args)
 
-            ## Train Procedure
-            for batch in train_loader:
-                optimizer.zero_grad()
+                ## Train Procedure
+                for batch in train_loader:
+                    optimizer.zero_grad()
 
-                data, label, index = batch
-                data = data.to(model.device)
-                label = label.to(model.device)
-                outputs = model(data)
-                pred = outputs
+                    data, label, index = batch
+                    data = data.to(model.device)
+                    label = label.to(model.device)
+                    outputs = model(data)
+                    pred = outputs
 
-                loss = loss_func(pred, label)
-                curr_resid = curr_resid.combine_first(pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy()))
-                loss.backward()
-                if clip_grad is not None:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
-                optimizer.step()
-                t_loss_sum += loss.item()
+                    loss = loss_func(pred, label)
+                    curr_resid = (pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy())).combine_first(curr_resid)
+                    loss.backward()
+                    if clip_grad is not None:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
+                    optimizer.step()
+                    t_loss_sum += loss.item()
 
-            if len(valid_set) > 0:
-                with torch.no_grad():
-                    for batch in valid_loader:
-                        data, label, index = batch
-                        data = data.to(model.device)
-                        label = label.to(model.device)
-                        pred = model(data)
+                if len(valid_set) > 0:
+                    with torch.no_grad():
+                        for batch in valid_loader:
+                            data, label, index = batch
+                            data = data.to(model.device)
+                            label = label.to(model.device)
+                            pred = model(data)
 
-                        loss = loss_func(pred, label)
-                        v_loss_sum += loss.item()
+                            loss = loss_func(pred, label)
+                            v_loss_sum += loss.item()
 
-            curr_record = pd.Series({
-                'fold': fold,
-                'valid_start': min(valid_indice),
-                'valid_end': max(valid_indice),
-                'epoch': epoch,
-                'training_loss': t_loss_sum / len(train_set),
-                'validation_loss': v_loss_sum / len(valid_set)
-            })
+                curr_record = pd.Series({
+                    'fold': fold,
+                    'valid_start': min(valid_indice),
+                    'valid_end': max(valid_indice),
+                    'epoch': epoch,
+                    'training_loss': t_loss_sum / len(train_loader),
+                    'validation_loss': v_loss_sum / len(valid_loader)
+                })
+                train_record.append(curr_record)
+                pbar.update(1)
 
-            train_record.append(curr_record)
-
-            # if verbose and epoch % 5 == 0:
-            #     print(concat_dict(curr_record.to_dict()))
-
+            pbar.set_postfix(curr_record.to_dict())
+        train_resid.append(curr_resid) ## Only append the residuals from the last epoch
         train_valid_loss.append(curr_record['validation_loss'])
         train_model_params.append(deepcopy(model.state_dict()))
-        train_resid.append(curr_resid)
 
     ## Find the best validation loss
     best_fold = train_valid_loss.index(min(train_valid_loss))
@@ -156,7 +156,7 @@ def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_
         test_resid = test_resid.combine_first(pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy()))
         loss = loss_func(pred, label)
         test_loss += loss.item()
-    print(f'Test loss: {test_loss / len(testset)}')
+    print(f'Test loss: {test_loss / len(test_data_loader)}')
     return test_resid
 
 def update_training_records(model: nn.Module, train_record: pd.DataFrame, train_set: Dataset, train_resid: pd.Series, append: bool=True):
@@ -287,9 +287,10 @@ class LSTM(nn.Module):
         self.output_size = output_size
         self.hidden_size = hidden_size
         self.seq_len = seq_len
+        self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
-        self.f_c = nn.Linear(in_features=input_size + hidden_size*2+(proj_size if proj_size > 0 else hidden_size), out_features=output_size).to(self.device)
+        self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
         self.train_set = Dataset()
         self.train_record = pd.DataFrame()
         self.train_resid = pd.Series(dtype='float32')
@@ -310,7 +311,7 @@ class LSTM(nn.Module):
         input_v = input_v.reshape(batch_num, self.seq_len, self.input_size)
         output_v, (hidden_v, cell_v) = self.model(input_v, h_0)
         output_v = output_v[:, -1, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-1]  # Select last hidden state
-        cell_v = cell_v[-1]  # Select last cell state
+        hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1) # Select last hidden state
+        cell_v = cell_v[-1] if not self.bidirectional else torch.cat((cell_v[-1], cell_v[-2]), dim=1) # Select last cell state
         output_v = torch.cat((output_v, hidden_v, cell_v), dim=1)
         return self.f_c(output_v)

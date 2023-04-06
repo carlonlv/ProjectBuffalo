@@ -123,7 +123,7 @@ class TimeSeries:
         def __getitem__(self, index):
             start_index = index
             end_index = index + self.seq_len
-            return self.data[start_index:end_index,:], self.data[end_index,self.target_cols], index
+            return self.data[start_index:end_index,:], self.data[end_index,self.target_cols], end_index
 
     def __init__(
             self,
