@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from sklearn.model_selection import TimeSeriesSplit
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from tqdm.auto import tqdm
 
@@ -25,7 +26,6 @@ def train_model(model: nn.Module,
                 epochs: PositiveInt,
                 clip_grad: Optional[PositiveFlt]=None,
                 multi_fold_valiation: bool=False,
-                # verbose: bool=True,
                 save_model: bool=False,
                 save_path: Optional[str]=None,
                 **dataloader_args) -> pd.DataFrame:
@@ -190,7 +190,6 @@ class RNN(nn.Module):
                  input_size: PositiveInt,
                  hidden_size: PositiveInt,
                  output_size: PositiveInt,
-                 seq_len: PositiveInt,
                  num_layers: PositiveInt=1,
                  nonlinearity: Literal['tanh', 'relu']='tanh',
                  bias: bool=True,
@@ -203,7 +202,6 @@ class RNN(nn.Module):
         :param input_size: The number of expected features in the input x, ie, number of features per time step.
         :param hidden_size: The number of features in the hidden state h.
         :param output_size: The number of features in the output.
-        :param seq_len: The length of the sequence.
         :param num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results. Default: 1.
         :param nonlinearity: The non-linearity to use. Can be either 'tanh' or 'relu'. Default: 'tanh'.
         :param bias: If False, then the layer does not use bias weights b_ih and b_hh. Default: True.
@@ -219,14 +217,14 @@ class RNN(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_size = hidden_size
-        self.seq_len = seq_len
         self.bidirectional = bidirectional
-        self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
+        self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
         self.train_set = Dataset()
         self.train_record = pd.DataFrame()
         self.train_resid = pd.Series(dtype='float32')
+        self.info = {'name': 'RNN', 'input_size': input_size, 'hidden_size': hidden_size, 'output_size': output_size, 'num_layers': num_layers, 'nonlinearity': nonlinearity, 'bias': bias, 'dropout': dropout, 'bidirectional': bidirectional, 'str_rep': str(self)}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -239,9 +237,9 @@ class RNN(nn.Module):
         :return: output: tensor of shape (N, L, D * H_out) when batched, containing the output features h_t from the last layer of the RNN, for each t. h_n: tensor of shape (N, D * num_layers, H_out) containing the hidden state for t = L.
         """
         batch_num = input_v.shape[0]
-        input_v = input_v.reshape(batch_num, self.seq_len * self.input_size)
-        input_v = self.batch_norm(input_v) ## Per time, per series batch normalization
-        input_v = input_v.reshape(batch_num, self.seq_len, self.input_size)
+        input_v = input_v.reshape(-1, self.input_size)
+        input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
+        input_v = input_v.reshape(batch_num, -1, self.input_size)
         output_v, hidden_v = self.model(input_v, h_0)
         output_v = output_v[:, -1, :]  # Select last output of each sequence
         hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1)  # Select last layer hidden state
@@ -258,7 +256,6 @@ class LSTM(nn.Module):
                  input_size: PositiveInt,
                  hidden_size: PositiveInt,
                  output_size: PositiveInt,
-                 seq_len: PositiveInt,
                  num_layers: PositiveInt=1,
                  bias: bool=True,
                  dropout: Prob=0,
@@ -271,7 +268,6 @@ class LSTM(nn.Module):
         :param input_size: The number of expected features in the input x, ie, number of features per time step.
         :param hidden_size: The number of features in the hidden state h.
         :param output_size: The number of features in the output.
-        :param seq_len: The length of the sequence.
         :param num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results. Default: 1.
         :param bias: If False, then the layer does not use bias weights b_ih and b_hh. Default: True.
         :param dropout: If non-zero, introduces a Dropout layer on the outputs of each RNN layer except the last layer, with dropout probability equal to dropout. Default: 0.
@@ -286,14 +282,11 @@ class LSTM(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_size = hidden_size
-        self.seq_len = seq_len
         self.bidirectional = bidirectional
-        self.batch_norm = nn.BatchNorm1d(num_features=input_size*seq_len).to(self.device)
+        self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
         self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
-        self.train_set = Dataset()
-        self.train_record = pd.DataFrame()
-        self.train_resid = pd.Series(dtype='float32')
+        self.info = {'name': 'LSTM', 'input_size': input_size, 'hidden_size': hidden_size, 'output_size': output_size, 'num_layers': num_layers, 'bias': bias, 'dropout': dropout, 'bidirectional': bidirectional, 'str_rep': str(self)}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -306,9 +299,9 @@ class LSTM(nn.Module):
         :param c_0: tensor of shape (D * num_layers, H_cell) for unbatched output or (D * num_layers, N, H_cell) containing the initial cell state for the input sequence batch. Defaults to zeros if (h_0, c_0) not provided.
         """
         batch_num = input_v.shape[0]
-        input_v = input_v.reshape(batch_num, self.seq_len * self.input_size)
-        input_v = self.batch_norm(input_v) ## Per time, per series batch normalization
-        input_v = input_v.reshape(batch_num, self.seq_len, self.input_size)
+        input_v = input_v.reshape(-1, self.input_size)
+        input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
+        input_v = input_v.reshape(batch_num, -1, self.input_size)
         output_v, (hidden_v, cell_v) = self.model(input_v, h_0)
         output_v = output_v[:, -1, :]  # Select last output of each sequence
         hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1) # Select last hidden state

@@ -2,15 +2,16 @@
 This module contains helper functions to manipulate predictors.
 """
 
+import sqlite3
 from typing import List, Optional
 from warnings import warn
 
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset
 
-from ..utility import PositiveInt, Prob
+from ..utility import PositiveInt, concat_list
 from .seasonality import ChisquaredtestSeasonalityDetection
 
 ALL_UNITS = ['D', 'H', 'T', 'S', 'L', 'U', 'N']
@@ -96,70 +97,125 @@ def align_dataframe_by_time(target_df: pd.DataFrame,
     result = result.dropna()
     return result
 
-class TimeSeries:
+
+class TimeSeriesData(Dataset):
     """
-    Time Series Data Type that uses dataframes as input, and convert them to pytorch tensors.
+    Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-
-    class TimeSeriesData(Dataset):
+    def __init__(self, endog: pd.DataFrame, exog: pd.DataFrame, seq_len: Optional[PositiveInt], name: Optional[str]=None):
         """
-        Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
-        """
-        def __init__(self, data: torch.Tensor, seq_len: PositiveInt, target_cols: torch.Tensor):
-            """
-            Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
+        Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
-            :param data: The concatenated pytorch tensor. The first column is time series of interest.
-            :param seq_len: The length of sequence, the last row contains label.
-            :param target_cols: The column index for labels.
-            """
-            self.data = data
-            self.seq_len = seq_len
-            self.target_cols = target_cols
-
-        def __len__(self):
-            return len(self.data) - self.seq_len
-
-        def __getitem__(self, index):
-            start_index = index
-            end_index = index + self.seq_len
-            return self.data[start_index:end_index,:], self.data[end_index,self.target_cols], end_index
-
-    def __init__(
-            self,
-            endog: pd.DataFrame,
-            exog: Optional[pd.DataFrame],
-            seq_len: PositiveInt) -> None:
-        """
         Intialize time series data.
 
         :param endog: The endogenous variable. The row of data is the time dimension.
         :param exog: The exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
-        :param seq_len: The length of past information, can only focus on the endogenous variable.
-        :param batch_size: The size of batch for training.
-        :param pin_memory: If True, the data loader will copy Tensors into device/CUDA pinned memory before returning them.
-        :param pin_memory_device: The data loader will copy Tensors into device pinned memory before returning them if pin_memory is set to true.
+        :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used.
+        :param name: The convenient name for the dataset.
         """
         assert endog.shape[0] == exog.shape[0]
-
         self.endog = endog.sort_index(ascending=True)
         self.exog = exog.sort_index(ascending=True)
         self.seq_len = seq_len
+        self.target_cols = torch.arange(self.endog.shape[1])
+        self.name = name
 
         endog_array = torch.Tensor(self.endog.to_numpy())
         exog_array = torch.Tensor(self.exog.to_numpy())
-        target_cols = torch.arange(0, endog_array.shape[1])
-        self.dataset = self.TimeSeriesData(torch.cat((endog_array, exog_array), dim=1), self.seq_len, target_cols)
+        self.dataset = torch.cat((endog_array.unsqueeze(1) if isinstance(self.endog, pd.Series) else endog_array, exog_array), dim=1)
+        self.info = {'endog': concat_list(self.endog.columns), 'exog': concat_list(self.exog.columns), 'seq_len': seq_len, 'name': name, 'n_obs': self.dataset.shape[0], 'start_time': self.endog.index[0], 'end_time': self.endog.index[-1]}
 
-    def get_traintest_splitted_dataset(self, train_ratio: Prob) -> List[Dataset]:
+    def __len__(self):
+        if self.seq_len is None:
+            return len(self.dataset) - 1
+        else:
+            return len(self.dataset) - self.seq_len
+
+    def __getitem__(self, index):
+        ## index goes from 0 to self.__len__() - 1
+        if self.seq_len is not None:
+            start_index = index
+            end_index = index + self.seq_len
+            return self.dataset[start_index:end_index,:], self.dataset[end_index,self.target_cols], end_index
+        else:
+            return self.dataset[:(index+1),:], self.dataset[index+1,self.target_cols], index + 1
+
+
+class ModelPerformance:
+    """
+    This class stores the model performance during training, validation and testing.
+    """
+
+    def __init__(self, model: torch.nn.Module, training_record: pd.DataFrame, training_residuals: pd.Series, testing_residuals: pd.Series, trainset: Dataset, testset: Dataset) -> None:
         """
-        Return splitted data set into training set, testing set and validation set.
+        Initializer for ModelPerformance object.
 
-        :param train_ratio: A positive float from 0 to 1.
-        :return: Splitted datasets.
+        :param training_record: The training record generated by train_model function, each training record stores the averaged loss on batches .
+        :param training_residuals: The training residuals.
+        :param testing_residuals: The testing residuals.
+        :param trainset: The training dataset.
+        :param testset: The testing dataset.
         """
-        train_size = int(len(self.dataset) * train_ratio)
-        test_size = len(self.dataset) - train_size
-        splitted_size = [train_size, test_size]
+        self.model = model
+        self.training_record = training_record
+        self.training_residuals = training_residuals
+        self.testing_residuals = testing_residuals
+        self.trainset = trainset
+        self.testset = testset
 
-        return random_split(self.dataset, splitted_size)
+    def extract_model_metadata(self) -> pd.Series:
+        """Extract the model metadata.
+
+        :return: The model metadata.
+        """
+        num_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        num_connections = 0
+        for name, param in self.model.named_parameters():
+            if 'weight' in name:
+                num_connections += torch.prod(torch.tensor(param.shape))
+        metadata = pd.Series({'param_count': num_params, 'connection_count': num_connections})
+        return metadata
+
+    def serialze_to_file(self, sql_path: str, additonal_notes: str='') -> None:
+        """ Write the performance of the model to a csv file and the trained model to file.
+
+        :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
+        :param additional_notes: Additional notes to be added to describe the model.
+        """
+        model_info = self.extract_model_metadata()
+        model_info['additonal_nots'] = additonal_notes
+
+        ## Store Model Information
+        newconn = sqlite3.connect(sql_path)
+        if 'model' in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall():
+            all_models = pd.read_sql_table('model', newconn)
+            next_id = all_models['model_id'].max() + 1
+        else:
+            all_models = pd.DataFrame()
+            next_id = 0
+
+        model_info['model_id'] = next_id
+        all_models = pd.concat([all_models, pd.DataFrame(model_info, index=[0])], axis=0, ignore_index=True)
+
+        ## Store Dataset Information
+        table_name = 'dataset'
+
+        original_timeseries = self.trainset.dataset.dataset ## Subsetted twice, once for train test split, once for train valid split, should be a  TimeSeries object
+
+        original_timeseries = self.testset.dataset ## Subsetted once for train test split, should be a  TimeSeries object
+
+        ## Store Trainset Information
+        
+        test_indices = self.testset.indices
+
+        ## Store Testset Information
+        train_indices = self.trainset.indices
+
+        model_info.to_sql('model', newconn, if_exists='append')
+        self.training_record.to_sql('training_record', newconn, if_exists='append')
+        self.training_residuals.to_sql('training_residuals', newconn, if_exists='append')
+        self.testing_residuals.to_sql('testing_residuals', newconn, if_exists='append')
+        newconn.close()
+
+        torch.save(self.model, sql_path.replace('.sqlite', '.pt'))
+        return
