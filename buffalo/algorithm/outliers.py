@@ -414,16 +414,16 @@ class IterativeTtestOutlierDetection:
             if types.loc[idx,'type'] == 'AO':
                 xxinv = np.flip(1 / np.cumsum(np.power(pi_coefs, 2)))
                 coef_hat = ao_xy * xxinv
-                result.loc[result['type'] == 'AO','coefhat'] = coef_hat
-                result.loc[result['type'] == 'AO','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'coefhat'] = coef_hat
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
             elif types.loc[idx,'type'] == 'TC':
                 delta = types.loc[idx,'delta']
                 x_y = np.flip(recursive_filter(rev_ao_xy, np.array([delta])))
                 dinvf = recursive_filter(pi_coefs, np.array([delta]))
                 xxinv = np.flip(1 / np.cumsum(np.power(dinvf, 2)))
                 coef_hat = x_y * xxinv
-                result.loc[result['type'] == 'TC','coefhat'] = coef_hat
-                result.loc[result['type'] == 'TC','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'coefhat'] = coef_hat
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
             elif types.loc[idx,'type'] == 'STC':
                 delta = types.loc[idx,'delta']
                 rm_id = np.arange(seasonal_s)
@@ -431,19 +431,19 @@ class IterativeTtestOutlierDetection:
                 dinvf = np.delete(diffinv(pi_coefs, lag=seasonal_s), rm_id)
                 xxinv = np.flip(1 / np.cumsum(np.power(dinvf, 2)))
                 coef_hat = x_y * xxinv
-                result.loc[result['type'] == 'STC','coefhat'] = coef_hat
-                result.loc[result['type'] == 'STC','tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'coefhat'] = coef_hat
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'tstat'] = coef_hat / (sigma * np.sqrt(xxinv))
             elif types.loc[idx,'type'] == 'VC':
                 min_n = types.loc[idx,'min_n']
                 bt_sqrd = [(np.sum(np.power(resid[:(i-1)], 2)), np.sum(np.power(resid[i:], 2))) for i in range(min_n+1, len(resid)-min_n)]
                 r_d = np.array([(bt_sqrd[i][1] * (i-1)) / (bt_sqrd[i][1] * (len(resid)-i+1)) for i in range(len(bt_sqrd))])
                 coef_hat = np.zeros(len(resid))
                 coef_hat[(min_n+1):(len(resid)-min_n)] = np.sqrt(r_d) - 1
-                result.loc[result['type'] == 'VC','coefhat'] = coef_hat
-                result.loc[result['type'] == 'VC','tstat'] = r_d.max() / r_d.min()
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'coefhat'] = coef_hat
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'tstat'] = r_d.max() / r_d.min()
             else:
-                result.loc[result['type'] == 'IO','coefhat'] = resid
-                result.loc[result['type'] == 'IO','tstat'] = resid / sigma
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'coefhat'] = resid
+                result.loc[result['type_id'] == types.loc[idx,'type_id'],'tstat'] = resid / sigma
         return result
 
     def locate_outliers(self, cval: PositiveFlt, id_start: NonnegativeInt):

@@ -205,7 +205,6 @@ class ModelPerformance:
         original_timeseries = self.testset.dataset ## Subsetted once for train test split, should be a  TimeSeries object
 
         ## Store Trainset Information
-        
         test_indices = self.testset.indices
 
         ## Store Testset Information
