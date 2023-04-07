@@ -10,175 +10,148 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from sklearn.model_selection import TimeSeriesSplit
-from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset, Subset
 from tqdm.auto import tqdm
 
-from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, Prob,
-                       create_parent_directory)
+from ..utility import NonnegativeInt, PositiveFlt, PositiveInt, Prob
+from .util import ModelPerformance
 
 
-def train_model(model: nn.Module,
-                optimizer: Any,
-                loss_func: Any,
-                trainset: Optional[Dataset],
-                validation_ratio: Prob,
-                epochs: PositiveInt,
-                clip_grad: Optional[PositiveFlt]=None,
-                multi_fold_valiation: bool=False,
-                save_model: bool=False,
-                save_path: Optional[str]=None,
-                **dataloader_args) -> pd.DataFrame:
+def train_and_evaluate_model(model: nn.Module,
+                             optimizer: Any,
+                             loss_func: Any,
+                             dataset: Optional[Dataset],
+                             epochs: PositiveInt,
+                             test_ratio: Prob,
+                             n_fold: PositiveInt=3,
+                             clip_grad: Optional[PositiveFlt]=None,
+                             **dataloader_args) -> ModelPerformance:
     """
-    Train the model.
+    Train and Evaluate the model.
 
     :param model: The model to be trained.
     :param optimizer: The optimizer.
     :param loss_func: The loss function.
-    :param trainset: The data set used to split the training set and validation set.
+    :param dataset: The data set used to split the training, validation and test set.
     :param validation_ratio: The ratio of validation set.
     :param epochs: The number of epochs.
+    :param n_fold: The number of folds for cross validation, the K+1th fold will be treated as test set, Kth fold will be treated as validation set, and the first K-1 fold will be treated as dataset. n_fold has be at least 2.
     :param clip_grad: The maximum gradient norm to be clipped. If None, then no gradient clipping is performed.
-    :param multi_fold_valiation: Whether to use multifold validation. If false and the validation ratio is positive, then only one validation set is used.
-    :param save_model: Whether to save the trained model to file.
+    :param save_record: Whether to save the trained model and trained record to file.
     :param save_path: Which filepath to save the trained model.
     :param dataloader_args: The arguments for the data loader.
     :return: The training record.
     """
-    if trainset is None:
-        trainset_not_provided = True
-        trainset = model.train_set
-    else:
-        trainset_not_provided = False
-    all_indices = set(range(len(trainset)))
-    if validation_ratio == 0:
-        train_indices = [all_indices]
-    else:
-        fold_size = floor(len(trainset) * validation_ratio)
-        if multi_fold_valiation:
-            n_folds = ceil(1 / validation_ratio)
-            train_indices = [all_indices - set(range(i * fold_size, min((i + 1) * fold_size, len(trainset) - 1))) for i in range(n_folds)]
+    def run_epoch(data_loader: DataLoader, is_train: bool):
+        loss_sum = 0
+        curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
+        for batch in data_loader:
+            optimizer.zero_grad()
+
+            data, label, index = batch
+            data = data.to(model.device)
+            label = label.to(model.device)
+            outputs = model(data)
+            pred = outputs
+
+            loss = loss_func(pred, label)
+            curr_resid = (pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy())).combine_first(curr_resid)
+
+            if is_train:
+                loss.backward()
+                if clip_grad is not None:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
+                optimizer.step()
+
+            loss_sum += loss.item()
+
+        return loss_sum / len(data_loader), curr_resid
+
+    dataset_not_provided = dataset is None
+    if dataset_not_provided:
+        dataset = model.dataset
+
+    test_size = ceil(len(dataset) * test_ratio)
+    train_size = len(dataset) - test_size
+
+    if train_size > 0:
+        assert n_fold > 0, 'n_fold must be at least 1.'
+
+        if n_fold > 1:
+            ## Cross validation, train, validation and test split
+            fold_size = floor(train_size / n_fold)
+            indices = [((0, i*fold_size), (i*fold_size, (i+1)*fold_size)) for i in range(1, n_fold-1)]
         else:
-            n_folds = 1
-            train_indices = [all_indices - set(range(0, min(fold_size, len(trainset) - 1)))]
+            ## No cross validation, only train and test split
+            indices = [((0, train_size), ())]
 
-    init_state_dict = deepcopy(model.state_dict())
-    train_record = []
-    train_resid = []
-    train_model_params = []
-    train_valid_loss = []
-    for fold, train_indice in tqdm(enumerate(train_indices), desc='Multi-fold validation', position=0, leave=True, total=len(train_indices)):
-        valid_indice = all_indices - train_indice
-        model.load_state_dict(init_state_dict) ## Reset the model parameters
-        with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
-            for epoch in range(epochs):
-                curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
-                t_loss_sum = 0
-                v_loss_sum = 0
+        init_state_dict = deepcopy(model.state_dict())
+        train_record = []
+        train_resid = []
+        train_model_params = []
+        train_valid_loss = []
+        train_indices = []
+        for fold, (train_indice, valid_indice) in tqdm(enumerate(indices), desc='Multi-fold validation', position=0, leave=True, total=len(indices)):
+            model.load_state_dict(init_state_dict) ## Reset the model parameters
+            with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
+                for epoch in range(epochs):
+                    train_set = Subset(dataset, range(*train_indice))
+                    train_loader = DataLoader(train_set, **dataloader_args)
+                    if len(valid_indice) > 0 and valid_indice[2] > valid_indice[1]:
+                        valid_set = Subset(dataset, range(*valid_indice))
+                        valid_loader = DataLoader(valid_set, **dataloader_args)
+                    else:
+                        valid_loader = None
 
-                train_set = Subset(trainset, list(train_indice))
-                valid_set = Subset(trainset, list(valid_indice))
-                train_loader = DataLoader(train_set, **dataloader_args)
-                valid_loader = DataLoader(valid_set, **dataloader_args)
+                    train_loss, train_resid = run_epoch(train_loader, is_train=True)
 
-                ## Train Procedure
-                for batch in train_loader:
-                    optimizer.zero_grad()
+                    if valid_loader is not None:
+                        with torch.no_grad():
+                            valid_loss, _ = run_epoch(valid_loader, is_train=False)
 
-                    data, label, index = batch
-                    data = data.to(model.device)
-                    label = label.to(model.device)
-                    outputs = model(data)
-                    pred = outputs
+                    curr_record = pd.Series({
+                        'fold': fold,
+                        'epoch': epoch,
+                        'train_start': train_indice[0],
+                        'train_end': train_indice[1],
+                        'valid_start': valid_indice[0] if valid_loader is not None else np.nan,
+                        'valid_end': valid_indice[1] if valid_loader is not None else np.nan,
+                        'training_loss': train_loss,
+                        'validation_loss': valid_loss if valid_loader is not None else np.nan
+                    })
+                    train_record.append(curr_record)
+                    pbar.update(1)
+                pbar.set_postfix(curr_record.to_dict())
 
-                    loss = loss_func(pred, label)
-                    curr_resid = (pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy())).combine_first(curr_resid)
-                    loss.backward()
-                    if clip_grad is not None:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad)
-                    optimizer.step()
-                    t_loss_sum += loss.item()
+            train_resid.append(train_resid) ## Only append the residuals from the last epoch
+            train_valid_loss.append(curr_record['validation_loss'])
+            train_model_params.append(deepcopy(model.state_dict()))
+            train_indices.append(train_indice)
 
-                if len(valid_set) > 0:
-                    with torch.no_grad():
-                        for batch in valid_loader:
-                            data, label, index = batch
-                            data = data.to(model.device)
-                            label = label.to(model.device)
-                            pred = model(data)
+        ## Find the best validation loss
+        best_fold = train_valid_loss.index(min(train_valid_loss))
+        model.load_state_dict(train_model_params[best_fold])
+        train_record = pd.concat([x.to_frame().T for x in train_record], ignore_index=True)
 
-                            loss = loss_func(pred, label)
-                            v_loss_sum += loss.item()
+    ## Test the model
+    if test_size > 0:
+        test_set = Subset(dataset, range(len(dataset)-test_size, len(dataset)))
+        test_loader = DataLoader(test_set, **dataloader_args)
+        with torch.no_grad():
+            test_loss, test_resid = run_epoch(test_loader, is_train=False)
 
-                curr_record = pd.Series({
-                    'fold': fold,
-                    'valid_start': min(valid_indice),
-                    'valid_end': max(valid_indice),
-                    'epoch': epoch,
-                    'training_loss': t_loss_sum / len(train_loader),
-                    'validation_loss': v_loss_sum / len(valid_loader)
-                })
-                train_record.append(curr_record)
-                pbar.update(1)
+    print(f'Averaged validation loss: {np.mean(train_valid_loss)}. Best validation loss: {train_valid_loss[best_fold]}. Test loss: {test_loss}.')
 
-            pbar.set_postfix(curr_record.to_dict())
-        train_resid.append(curr_resid) ## Only append the residuals from the last epoch
-        train_valid_loss.append(curr_record['validation_loss'])
-        train_model_params.append(deepcopy(model.state_dict()))
-
-    ## Find the best validation loss
-    best_fold = train_valid_loss.index(min(train_valid_loss))
-    model.load_state_dict(train_model_params[best_fold])
-    train_record = pd.concat([x.to_frame().T for x in train_record], ignore_index=True)
-    update_training_records(model, train_record, Subset(trainset, list(train_indices[best_fold])) if not trainset_not_provided else Dataset(), train_resid[best_fold], trainset_not_provided)
-    if save_model:
-        create_parent_directory(save_path)
-        torch.save(model, save_path)
-    print(f'Averaged validation loss: {np.mean(train_valid_loss)}. Best validation loss: {min(train_valid_loss)}')
-    return train_record
-
-def test_model(model: nn.Module, testset: Dataset, loss_func: Any, **dataloader_args):
-    """
-    Test the model.
-
-    :param model: The model.
-    :param data_loader: The test set DataLoader.
-    :return: The test residuals.
-    """
-    test_data_loader = DataLoader(testset, **dataloader_args)
-    test_loss = 0
-    test_resid = pd.Series(dtype='float32')
-    for batch in tqdm(test_data_loader, desc='Batched testing'):
-        data, label, index = batch
-        data = data.to(model.device)
-        label = label.to(model.device)
-        pred = model(data)
-        test_resid = test_resid.combine_first(pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy()))
-        loss = loss_func(pred, label)
-        test_loss += loss.item()
-    print(f'Test loss: {test_loss / len(test_data_loader)}')
-    return test_resid
-
-def update_training_records(model: nn.Module, train_record: pd.DataFrame, train_set: Dataset, train_resid: pd.Series, append: bool=True):
-    """
-    Update the training records of the model.
-
-    :param model: The model where training info are stored to.
-    :param train_record: The training record generated by train_model function.
-    :param train_set: The training set used by train_model function.
-    :param train_resid: The training residuals generated by train_model function.
-    :param append: If True, append the training info to the existing training info. Default: True.
-    """
-    if append:
-        model.train_set = ConcatDataset([model.train_set, train_set])
-        max_epoch = model.train_record['epoch'].max() + 1
-        train_record['epoch'] = train_record['epoch'] - train_record['epoch'].min() + max_epoch
-        model.train_record = pd.concat([model.train_record, train_record], axis=0)
-        model.train_resid = model.train_resid.combine_first(train_resid)
-    else:
-        model.train_set = train_set
-        model.train_record = train_record
-        model.train_resid = train_resid
+    return ModelPerformance(model=model,
+                            dataset=dataset,
+                            training_record=train_record if train_size > 0 else pd.DataFrame(),
+                            training_residuals=train_resid[best_fold] if train_size > 0 else pd.Series(dtype='float32'),
+                            train_indice=train_indices[best_fold] if train_size > 0 else (np.nan, np.nan),
+                            testing_residuals=test_resid if test_size > 0 else pd.Series(dtype='float32'),
+                            test_indice=(len(dataset)-test_size, len(dataset)) if test_size > 0 else (np.nan, np.nan),
+                            test_loss=test_loss if test_size > 0 else np.nan,
+                            loss_func=str(loss_func),
+                            optimizer=str(optimizer))
 
 
 class RNN(nn.Module):
@@ -221,10 +194,18 @@ class RNN(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
-        self.train_set = Dataset()
-        self.train_record = pd.DataFrame()
-        self.train_resid = pd.Series(dtype='float32')
-        self.info = {'name': 'RNN', 'input_size': input_size, 'hidden_size': hidden_size, 'output_size': output_size, 'num_layers': num_layers, 'nonlinearity': nonlinearity, 'bias': bias, 'dropout': dropout, 'bidirectional': bidirectional, 'str_rep': str(self)}
+        self.info = {'name': 'RNN',
+                     'input_size': input_size,
+                     'hidden_size': hidden_size,
+                     'output_size': output_size,
+                     'num_layers': num_layers,
+                     'nonlinearity': nonlinearity,
+                     'bias': bias,
+                     'dropout': dropout,
+                     'bidirectional': bidirectional,
+                     'str_rep': str(self),
+                     'param_count': sum(p.numel() for p in self.model.parameters() if p.requires_grad),
+                     'connection_count': torch.sum(torch.prod(torch.tensor(param.shape)) for name, param in self.model.named_parameters() if 'weight' in name).item()}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -286,7 +267,18 @@ class LSTM(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
         self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
-        self.info = {'name': 'LSTM', 'input_size': input_size, 'hidden_size': hidden_size, 'output_size': output_size, 'num_layers': num_layers, 'bias': bias, 'dropout': dropout, 'bidirectional': bidirectional, 'str_rep': str(self)}
+        self.info = {'name': 'LSTM',
+                     'input_size': input_size,
+                     'hidden_size': hidden_size,
+                     'output_size': output_size,
+                     'num_layers': num_layers,
+                     'bias': bias,
+                     'dropout': dropout,
+                     'bidirectional': bidirectional,
+                     'str_rep': str(self),
+                     'create_time': pd.Timestamp.now(),
+                     'param_count': sum(p.numel() for p in self.model.parameters() if p.requires_grad),
+                     'connection_count': torch.sum(torch.prod(torch.tensor(param.shape)) for name, param in self.model.named_parameters() if 'weight' in name).item()}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
