@@ -271,12 +271,16 @@ class ModelPerformance:
         ## Load Testing Information
         self.testing_info = pd.read_sql_table('testing_info', newconn).query(f'testing_id={testing_id}').T
         self.testing_residuals = pd.read_sql_table('residuals', newconn).query(f'train_or_test_id={testing_id} and type="testing"')
+        self.testing_residuals.set_index('index', inplace=True)
+        self.testing_residuals = self.testing_residuals[0]
 
         ## Load Training Information
         self.training_info = pd.read_sql_table('training_info', newconn).query(f'training_id={self.testing_info["training_id"]}').T
         self.model = torch.load(f'{os.path.dirname(sql_path)}/model_{self.training_info["training_id"]}.pt')
         self.training_record = pd.read_sql_table('training_record', newconn).query(f'training_id={self.training_info["training_id"]}')
         self.training_residuals = pd.read_sql_table('residuals', newconn).query(f'train_or_test_id={self.training_info["training_id"]} and type="training"')
+        self.training_residuals.set_index('index', inplace=True)
+        self.training_residuals = self.training_residuals[0]
 
         ## Load Model Information
         self.model.info = pd.read_sql_table('model_info', newconn).query(f'model_id={self.training_info["model_id"]}').T
