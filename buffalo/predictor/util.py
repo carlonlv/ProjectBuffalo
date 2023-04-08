@@ -267,42 +267,46 @@ class ModelPerformance:
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             self.testing_residuals.assign(id = searched_id, type = 'testing').to_sql(f'residuals_{self.training_info["dataset_id"]}', newconn, if_exists='append', index=True, index_label='index')
         else:
-            warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')        
+            warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.testing_info[id_col] = searched_id
 
         newconn.close()
 
-    def deserialize_from_file(self, sql_path: str, testing_id: NonnegativeInt) -> None:
+    @classmethod
+    def deserialize_from_file(cls, sql_path: str, testing_id: NonnegativeInt):
         """ Read the performance of the model from a csv file and the trained model from file.
 
         :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
         :param testing_id: The id of the testing. Other information will be inferred and loaded.
+        :return: The loaded ModelPerformance object.
         """
         newconn = sqlite3.connect(sql_path)
 
         ## Load Testing Information
-        self.testing_info = pd.read_sql_query(f'SELECT * FROM testing_info WHERE testing_id={testing_id}', newconn).T
+        testing_info = pd.read_sql_query(f'SELECT * FROM testing_info WHERE testing_id={testing_id}', newconn).T[0]
 
         ## Load Training Information
-        self.training_info = pd.read_sql_query(f'SELECT * FROM training_info WHERE training_id={self.testing_info["training_id"]}', newconn).T
-        self.model = torch.load(f'{os.path.dirname(sql_path)}/model_{self.training_info["training_id"]}.pt')
-        self.training_record = pd.read_sql_query(f'SELECT * FROM training_record WHERE training_id={self.training_info["training_id"]}', newconn)
+        training_info = pd.read_sql_query(f'SELECT * FROM training_info WHERE training_id={testing_info["training_id"]}', newconn).T[0]
+        model = torch.load(f'{os.path.dirname(sql_path)}/model_{training_info["training_id"]}.pt')
+        training_record = pd.read_sql_query(f'SELECT * FROM training_record WHERE training_id={training_info["training_id"]}', newconn).drop(columns=['training_id'])
 
         ## Load Residuals
-        self.testing_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{self.training_info["dataset_id"]} WHERE id={self.testing_info["testing_id"]} and type="testing"', newconn, index_col='index')
-        self.training_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{self.training_info["dataset_id"]} WHERE id={self.training_info["training_id"]} and type="training"', newconn, index_col='index')
+        testing_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{training_info["dataset_id"]} WHERE id={testing_info["testing_id"]} and type="testing"', newconn, index_col='index').drop(columns=['id', 'type'])
+        training_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{training_info["dataset_id"]} WHERE id={training_info["training_id"]} and type="training"', newconn, index_col='index').drop(columns=['id', 'type'])
 
         ## Load Model Information
-        self.model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={self.training_info["model_id"]}', newconn).T
+        model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={training_info["model_id"]}', newconn).T[0]
 
         ## Load Dataset Information
-        dataset_info = pd.read_sql_query(f'SELECT * FROM dataset_info WHERE dataset_id={self.training_info["dataset_id"]}', newconn).T
-        data_info = pd.read_sql_table(f'dataset_{self.training_info["dataset_id"]}', newconn, index_col='time', parse_dates=['time'])
+        dataset_info = pd.read_sql_query(f'SELECT * FROM dataset_info WHERE dataset_id={training_info["dataset_id"]}', newconn).T[0]
+        data_info = pd.read_sql_query(f'SELECT * FROM dataset_{training_info["dataset_id"]}', newconn, index_col='time', parse_dates=['time'])
         endog_cols = dataset_info['endog'].split(',')
         exog_cols = dataset_info['exog'].split(',')
-        self.dataset = TimeSeriesData(data_info[endog_cols], data_info[exog_cols], data_info['seq_len'] if pd.isna(data_info['seq_len']) else None, data_info['name'])
-        self.dataset.info = dataset_info
+        dataset = TimeSeriesData(data_info[endog_cols], data_info[exog_cols], dataset_info['seq_len'] if not pd.isna(dataset_info['seq_len']) else None, dataset_info['name'])
+        dataset.info = dataset_info
         newconn.close()
+
+        return cls(model, dataset, training_record, training_residuals, testing_residuals, training_info, testing_info)
 
     def plot_training_records(self):
         """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
