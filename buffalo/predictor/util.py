@@ -227,7 +227,10 @@ class ModelPerformance:
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.model.info[id_col] = searched_id
-            pd.DataFrame(self.model.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
+            if searched_id == 1:
+                pd.DataFrame(self.model.info, index=[0]).to_sql(table_name, newconn, index=False)
+            else:
+                pd.concat((pd.read_sql_table(table_name, newconn), pd.DataFrame(self.model.info, index=[0])), axis=0, ignore_index=True).to_sql(table_name, newconn, index=False, if_exists='replace')
         else:
             warn(f'model_info with the same primary keys already exists with id {searched_id}, will not store model information.')
 
