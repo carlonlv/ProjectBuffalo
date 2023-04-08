@@ -217,11 +217,12 @@ class ModelPerformance:
         searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.dataset.info).drop('create_time'), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.dataset.info[id_col] = searched_id
             pd.DataFrame(self.dataset.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             pd.concat((self.dataset.endog, self.dataset.exog), axis=1).to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
         else:
             warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
-        self.dataset.info[id_col] = searched_id
+            self.dataset.info[id_col] = searched_id
 
         ## Store Model Information
         table_name = 'model_info'
@@ -230,13 +231,14 @@ class ModelPerformance:
         searched_id = search_id_given_pk(newconn, table_name, self.model.info, id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.model.info[id_col] = searched_id
             if searched_id == 1:
                 pd.DataFrame(self.model.info, index=[0]).to_sql(table_name, newconn, index=False)
             else:
                 pd.concat((pd.read_sql_query(f'SELECT * FROM {table_name}', newconn), pd.DataFrame(self.model.info, index=[0])), axis=0, ignore_index=True).to_sql(table_name, newconn, index=False, if_exists='replace')
         else:
             warn(f'model_info with the same primary keys already exists with id {searched_id}, will not store model information.')
-        self.model.info[id_col] = searched_id
+            self.model.info[id_col] = searched_id
 
         table_name = 'training_info'
         id_col = 'training_id'
@@ -245,13 +247,14 @@ class ModelPerformance:
         searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.training_info).drop(['train_start_time', 'train_stop_time', 'train_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.training_info[id_col] = searched_id
             pd.DataFrame(self.training_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/model_{searched_id}.pt')
             self.training_record.assign(training_id = searched_id).to_sql('training_record', newconn, if_exists='append', index=False)
             self.training_residuals.assign(id = searched_id, type = 'training').to_sql(f'residuals_{self.training_info["dataset_id"]}', newconn, if_exists='append', index=True, index_label='index')
         else:
             warn(f'training_info ({searched_id}) with the same primary keys already exists, will not store model information.')
-        self.training_info[id_col] = searched_id
+            self.training_info[id_col] = searched_id
 
         ## Store Testing Information
         table_name = 'testing_info'
@@ -260,11 +263,12 @@ class ModelPerformance:
         searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.testing_info).drop(['test_start_time', 'test_stop_time', 'test_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.testing_info[id_col] = searched_id
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             self.testing_residuals.assign(id = searched_id, type = 'testing').to_sql(f'residuals_{self.training_info["dataset_id"]}', newconn, if_exists='append', index=True, index_label='index')
         else:
             warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')        
-        self.testing_info[id_col] = searched_id
+            self.testing_info[id_col] = searched_id
 
         newconn.close()
 
@@ -315,6 +319,8 @@ class ModelPerformance:
         plt2.set_title('Validation Loss over Time')
         plt2.set_xlabel('Epoch')
         plt2.set_ylabel('Validation Loss')
+
+        plt.subplots_adjust(hspace=0.5)
         plt.show()
 
     def plot_residuals(self):
@@ -334,4 +340,6 @@ class ModelPerformance:
         plt2.set_title('Residual Time Series')
         plt2.set_xlabel('Time')
         plt2.set_ylabel('Price')
+
+        plt.subplots_adjust(hspace=0.5)
         plt.show()
