@@ -230,9 +230,9 @@ class ModelPerformance:
         id_col = 'training_id'
         self.training_info['dataset_id'] = self.dataset.info['dataset_id']
         self.training_info['model_id'] = self.model.info['model_id']
-        searched_id = search_id_given_pk(newconn, table_name, self.training_info.drop(['train_start_time', 'train_stop_time', 'train_elapsed_time']), id_col)
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.training_info).drop(['train_start_time', 'train_stop_time', 'train_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, table_name, {}, id_col)
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.training_info[id_col] = searched_id
             pd.DataFrame(self.training_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/model_{searched_id}.pt')
@@ -245,9 +245,9 @@ class ModelPerformance:
         table_name = 'testing_info'
         id_col = 'testing_id'
         self.testing_info['training_id'] = self.training_info['training_id']
-        searched_id = search_id_given_pk(newconn, table_name, self.testing_info.drop(['test_start_time', 'test_stop_time', 'test_elapsed_time']), id_col)
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.testing_info).drop(['test_start_time', 'test_stop_time', 'test_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, table_name, {}, id_col)
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.testing_info[id_col] = searched_id
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             self.testing_residuals.reset_index().assign(train_or_test_id = searched_id, type = 'testing').to_sql('residuals', newconn, if_exists='append', index=False)
