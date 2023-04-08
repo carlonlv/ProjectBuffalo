@@ -2,6 +2,7 @@
 This module contains models for trend predictor for time series.
 """
 
+import timeit
 from copy import deepcopy
 from math import ceil, floor
 from typing import Any, Literal, Optional, Tuple
@@ -21,7 +22,7 @@ def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
                              loss_func: Any,
                              dataset: Optional[Dataset],
-                             epochs: PositiveInt,
+                             epochs_per_fold: PositiveInt,
                              test_ratio: Prob,
                              n_fold: PositiveInt=3,
                              clip_grad: Optional[PositiveFlt]=None,
@@ -34,7 +35,7 @@ def train_and_evaluate_model(model: nn.Module,
     :param loss_func: The loss function.
     :param dataset: The data set used to split the training, validation and test set.
     :param validation_ratio: The ratio of validation set.
-    :param epochs: The number of epochs.
+    :param epochs_per_fold: The number of epochs per fold. Later folds will have more epochs because the model is trained on more data.
     :param n_fold: The number of folds for cross validation, the K+1th fold will be treated as test set, Kth fold will be treated as validation set, and the first K-1 fold will be treated as dataset. n_fold has be at least 2.
     :param clip_grad: The maximum gradient norm to be clipped. If None, then no gradient clipping is performed.
     :param save_record: Whether to save the trained model and trained record to file.
@@ -75,29 +76,32 @@ def train_and_evaluate_model(model: nn.Module,
     train_size = len(dataset) - test_size
 
     if train_size > 0:
+        train_start_time = timeit.default_timer()
         assert n_fold > 0, 'n_fold must be at least 1.'
 
         if n_fold > 1:
             ## Cross validation, train, validation and test split
             fold_size = floor(train_size / n_fold)
-            indices = [((0, i*fold_size), (i*fold_size, (i+1)*fold_size)) for i in range(1, n_fold-1)]
+            indices = [((0, i*fold_size), (i*fold_size, (i+1)*fold_size)) for i in range(1, n_fold)]
+            indices.append(((0, train_size-1), ()))
         else:
             ## No cross validation, only train and test split
-            indices = [((0, train_size), ())]
+            indices = [((0, train_size-1), ())]
 
         init_state_dict = deepcopy(model.state_dict())
         train_record = []
-        train_resid = []
-        train_model_params = []
         train_valid_loss = []
-        train_indices = []
+        # train_resids = []
+        # train_model_params = []
+        # train_indices = []
         for fold, (train_indice, valid_indice) in tqdm(enumerate(indices), desc='Multi-fold validation', position=0, leave=True, total=len(indices)):
             model.load_state_dict(init_state_dict) ## Reset the model parameters
+            epochs = (fold + 1) * epochs_per_fold
             with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
                 for epoch in range(epochs):
                     train_set = Subset(dataset, range(*train_indice))
                     train_loader = DataLoader(train_set, **dataloader_args)
-                    if len(valid_indice) > 0 and valid_indice[2] > valid_indice[1]:
+                    if len(valid_indice) > 0 and valid_indice[1] > valid_indice[0]:
                         valid_set = Subset(dataset, range(*valid_indice))
                         valid_loader = DataLoader(valid_set, **dataloader_args)
                     else:
@@ -123,35 +127,53 @@ def train_and_evaluate_model(model: nn.Module,
                     pbar.update(1)
                 pbar.set_postfix(curr_record.to_dict())
 
-            train_resid.append(train_resid) ## Only append the residuals from the last epoch
             train_valid_loss.append(curr_record['validation_loss'])
-            train_model_params.append(deepcopy(model.state_dict()))
-            train_indices.append(train_indice)
+            # train_resids.append(train_resid) ## Only append the residuals from the last epoch
+            # train_indices.append(train_indice)
+            # train_model_params.append(deepcopy(model.state_dict()))
 
-        ## Find the best validation loss
-        best_fold = train_valid_loss.index(min(train_valid_loss))
-        model.load_state_dict(train_model_params[best_fold])
+        # best_fold = train_valid_loss.index(min(train_valid_loss))
+        # model.load_state_dict(train_model_params[best_fold])
         train_record = pd.concat([x.to_frame().T for x in train_record], ignore_index=True)
+        train_stop_time = timeit.default_timer()
 
     ## Test the model
     if test_size > 0:
+        test_start_time = timeit.default_timer()
         test_set = Subset(dataset, range(len(dataset)-test_size, len(dataset)))
         test_loader = DataLoader(test_set, **dataloader_args)
         with torch.no_grad():
             test_loss, test_resid = run_epoch(test_loader, is_train=False)
+        test_stop_time = timeit.default_timer()
 
-    print(f'Averaged validation loss: {np.mean(train_valid_loss)}. Best validation loss: {train_valid_loss[best_fold]}. Test loss: {test_loss}.')
+    print(f'Averaged validation loss: {np.nanmean(train_valid_loss)}. Test loss: {test_loss}.')
+
+    training_info = {'train_start': 0 if train_size > 0 else None,
+                     'train_end': train_size-1 if train_size > 0 else None,
+                     'train_loss_func': str(loss_func),
+                     'train_optimizer': str(optimizer),
+                     'train_clip_grad': clip_grad,
+                     'train_epochs': epochs,
+                     'train_start_time': train_start_time if train_size > 0 else None,
+                     'train_stop_time': train_stop_time if train_size > 0 else None,
+                     'train_elapsed_time': train_stop_time - train_start_time if train_size > 0 else None,
+                     'train_n_fold': n_fold if train_size > 0 else None,
+                     'average_validation_loss': np.nanmean(train_valid_loss) if train_size > 0 else None}
+    testing_info = {'test_start': len(dataset)-test_size if test_size > 0 else None,
+                    'test_end': len(dataset) if test_size > 0 else None,
+                    'test_loss_func': str(loss_func),
+                    'test_loss': test_loss if test_size > 0 else None,
+                    'test_start_time': test_start_time if test_size > 0 else None,
+                    'test_stop_time': test_stop_time if test_size > 0 else None,
+                    'test_elapsed_time': test_stop_time - test_start_time if test_size > 0 else None}
 
     return ModelPerformance(model=model,
                             dataset=dataset,
                             training_record=train_record if train_size > 0 else pd.DataFrame(),
-                            training_residuals=train_resid[best_fold] if train_size > 0 else pd.Series(dtype='float32'),
-                            train_indice=train_indices[best_fold] if train_size > 0 else (np.nan, np.nan),
+                            training_residuals=train_resid if train_size > 0 else pd.Series(dtype='float32'),
                             testing_residuals=test_resid if test_size > 0 else pd.Series(dtype='float32'),
-                            test_indice=(len(dataset)-test_size, len(dataset)) if test_size > 0 else (np.nan, np.nan),
-                            test_loss=test_loss if test_size > 0 else np.nan,
-                            loss_func=str(loss_func),
-                            optimizer=str(optimizer))
+                            training_info=training_info,
+                            testing_info=testing_info)
 
 
 class RNN(nn.Module):
@@ -194,6 +216,12 @@ class RNN(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
+        batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
+        batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
+        rnn_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        rnn_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.model.named_parameters() if 'weight' in name])
+        fc_param_count = sum(p.numel() for p in self.f_c.parameters() if p.requires_grad)
+        fc_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.f_c.named_parameters() if 'weight' in name])
         self.info = {'name': 'RNN',
                      'input_size': input_size,
                      'hidden_size': hidden_size,
@@ -204,8 +232,8 @@ class RNN(nn.Module):
                      'dropout': dropout,
                      'bidirectional': bidirectional,
                      'str_rep': str(self),
-                     'param_count': sum(p.numel() for p in self.model.parameters() if p.requires_grad),
-                     'connection_count': torch.sum(torch.prod(torch.tensor(param.shape)) for name, param in self.model.named_parameters() if 'weight' in name).item()}
+                     'param_count': batchnorm_param_count + rnn_param_count + fc_param_count,
+                     'connection_count': batchnorm_connection_count + rnn_connection_count + fc_connection_count}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -267,6 +295,12 @@ class LSTM(nn.Module):
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
         self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
+        batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
+        batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
+        lstm_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        lstm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.model.named_parameters() if 'weight' in name])
+        fc_param_count = sum(p.numel() for p in self.f_c.parameters() if p.requires_grad)
+        fc_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.f_c.named_parameters() if 'weight' in name])
         self.info = {'name': 'LSTM',
                      'input_size': input_size,
                      'hidden_size': hidden_size,
@@ -276,9 +310,8 @@ class LSTM(nn.Module):
                      'dropout': dropout,
                      'bidirectional': bidirectional,
                      'str_rep': str(self),
-                     'create_time': pd.Timestamp.now(),
-                     'param_count': sum(p.numel() for p in self.model.parameters() if p.requires_grad),
-                     'connection_count': torch.sum(torch.prod(torch.tensor(param.shape)) for name, param in self.model.named_parameters() if 'weight' in name).item()}
+                     'param_count': batchnorm_param_count + lstm_param_count + fc_param_count,
+                     'connection_count': batchnorm_connection_count + lstm_connection_count + fc_connection_count}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
