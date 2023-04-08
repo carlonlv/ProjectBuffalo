@@ -5,23 +5,23 @@ This module contains models for trend predictor for time series.
 import timeit
 from copy import deepcopy
 from math import ceil, floor
-from typing import Any, Literal, Optional, Tuple
+from typing import Any, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Subset
 from tqdm.auto import tqdm
 
 from ..utility import NonnegativeInt, PositiveFlt, PositiveInt, Prob
-from .util import ModelPerformance
+from .util import ModelPerformance, TimeSeriesData
 
 
 def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
                              loss_func: Any,
-                             dataset: Optional[Dataset],
+                             dataset: Optional[TimeSeriesData],
                              epochs_per_fold: PositiveInt,
                              test_ratio: Prob,
                              n_fold: PositiveInt=3,
@@ -43,9 +43,9 @@ def train_and_evaluate_model(model: nn.Module,
     :param dataloader_args: The arguments for the data loader.
     :return: The training record.
     """
-    def run_epoch(data_loader: DataLoader, is_train: bool):
+    def run_epoch(data_loader: DataLoader, is_train: bool, residual_cols: List[str]):
         loss_sum = 0
-        curr_resid = pd.Series(dtype='float32') ## Initalize the residuals to be nan
+        curr_resid = pd.DataFrame(columns=residual_cols) ## Initalize the residuals to be nan
         for batch in data_loader:
             optimizer.zero_grad()
 
@@ -56,7 +56,7 @@ def train_and_evaluate_model(model: nn.Module,
             pred = outputs
 
             loss = loss_func(pred, label)
-            curr_resid = (pd.Series((label - pred).squeeze().detach().cpu().numpy(), index=index.squeeze().cpu().numpy())).combine_first(curr_resid)
+            curr_resid = (pd.DataFrame((label - pred).detach().cpu().numpy(), index=index.squeeze().cpu().numpy(), columns=residual_cols)).combine_first(curr_resid)
 
             if is_train:
                 loss.backward()
@@ -74,6 +74,7 @@ def train_and_evaluate_model(model: nn.Module,
 
     test_size = ceil(len(dataset) * test_ratio)
     train_size = len(dataset) - test_size
+    endog_cols = dataset.endog.columns
 
     if train_size > 0:
         train_start_time = timeit.default_timer()
@@ -107,11 +108,11 @@ def train_and_evaluate_model(model: nn.Module,
                     else:
                         valid_loader = None
 
-                    train_loss, train_resid = run_epoch(train_loader, is_train=True)
+                    train_loss, train_resid = run_epoch(train_loader, is_train=True, residual_cols=endog_cols)
 
                     if valid_loader is not None:
                         with torch.no_grad():
-                            valid_loss, _ = run_epoch(valid_loader, is_train=False)
+                            valid_loss, _ = run_epoch(valid_loader, is_train=False, residual_cols=endog_cols)
 
                     curr_record = pd.Series({
                         'fold': fold,
@@ -143,7 +144,7 @@ def train_and_evaluate_model(model: nn.Module,
         test_set = Subset(dataset, range(len(dataset)-test_size, len(dataset)))
         test_loader = DataLoader(test_set, **dataloader_args)
         with torch.no_grad():
-            test_loss, test_resid = run_epoch(test_loader, is_train=False)
+            test_loss, test_resid = run_epoch(test_loader, is_train=False, residual_cols=endog_cols)
         test_stop_time = timeit.default_timer()
 
     print(f'Averaged validation loss: {np.nanmean(train_valid_loss)}. Test loss: {test_loss}.')
