@@ -185,15 +185,20 @@ class ModelPerformance:
         :param additonal_note_model: Additional notes to be added to describe the model.
         """
         def search_id_given_pk(conn, table_name, pks, id_col):
-            if table_name not in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall():
+            if table_name not in [x[0] for x in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
                 return 0
             query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
             for pk_name, pk_value in pks.items():
-                query += f" {pk_name} = '{pk_value}' AND"
+                if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
+                    query += f" {pk_name} = '{pk_value}' AND"
+                else:
+                    query += f" {pk_name} = {pk_value} AND"
             if len(pks) > 0:
                 query = query[:-4]
+            else:
+                query = query[:-6]
             result = conn.execute(query).fetchall()
-            if len(result) == 0:
+            if result[0][0] is None:
                 return 0
             else:
                 return result[0][0]
@@ -205,7 +210,7 @@ class ModelPerformance:
         table_name = 'dataset_info'
         id_col = 'dataset_id'
         self.dataset.info['additional_notes'] = additional_note_dataset
-        searched_id = search_id_given_pk(newconn, table_name, self.dataset.info, id_col)
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.dataset.info).drop('create_time'), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.dataset.info[id_col] = searched_id
