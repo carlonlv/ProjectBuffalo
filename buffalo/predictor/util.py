@@ -230,7 +230,7 @@ class ModelPerformance:
         id_col = 'training_id'
         self.training_info['dataset_id'] = self.dataset.info['dataset_id']
         self.training_info['model_id'] = self.model.info['model_id']
-        searched_id = search_id_given_pk(newconn, table_name, self.training_info, id_col)
+        searched_id = search_id_given_pk(newconn, table_name, self.training_info.drop(['train_start_time', 'train_stop_time', 'train_elapsed_time']), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col)
             self.training_info[id_col] = searched_id
@@ -245,7 +245,7 @@ class ModelPerformance:
         table_name = 'testing_info'
         id_col = 'testing_id'
         self.testing_info['training_id'] = self.training_info['training_id']
-        searched_id = search_id_given_pk(newconn, table_name, self.testing_info, id_col)
+        searched_id = search_id_given_pk(newconn, table_name, self.testing_info.drop(['test_start_time', 'test_stop_time', 'test_elapsed_time']), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col)
             self.testing_info[id_col] = searched_id
