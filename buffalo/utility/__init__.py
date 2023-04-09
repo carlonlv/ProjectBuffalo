@@ -184,3 +184,21 @@ def split_string_to_words(concat_words: str) -> List[str]:
     words = concat_words.split('_')
     words = [w if w.isupper() else re.sub(r'(?<!^)(?=[A-Z])', '_', w) for w in words]
     return words
+
+def flatten_dict(dct, parent_key='', sep='_'):
+    """
+    Recursively flattens a dictionary by joining nested keys with the separator character.
+
+    :param dct: A dictionary to be flattened.
+    :param parent_key: A string representing the parent key of the current dictionary.
+    :param sep: A string representing the separator character.
+    :return: A flattened dictionary.
+    """
+    items = []
+    for key, value in dct.items():
+        new_key = parent_key + sep + key if parent_key else key
+        if isinstance(value, dict):
+            items.extend(flatten_dict(value, new_key, sep=sep).items())
+        else:
+            items.append((new_key, value))
+    return dict(items)

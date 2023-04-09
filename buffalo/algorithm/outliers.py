@@ -2,6 +2,7 @@
 This module contains algorithms for identifying/removing/predicting outliers.
 """
 import copy
+import sqlite3
 import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
@@ -11,7 +12,8 @@ import pandas as pd
 from pmdarima import ARIMA, AutoARIMA
 from scipy import signal
 
-from ..utility import NonnegativeInt, PositiveFlt, PositiveInt
+from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, concat_list,
+                       create_parent_directory)
 
 
 def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt):
@@ -294,6 +296,18 @@ class IterativeTtestOutlierDetection:
 
         self.args_tsmethod = args_tsmethod
 
+        self.info = {'types': self.types,
+                     'maxit': self.maxit,
+                     'maxit_iloop': self.maxit_iloop,
+                     'maxit_oloop': self.maxit_oloop,
+                     'cval': self.cval,
+                     'cval_reduce': self.cval_reduce,
+                     'discard_method': self.discard_method,
+                     'discard_cval': self.discard_cval,
+                     'tsmethod': self.tsmethod,
+                     'args_tsmethod': self.args_tsmethod,
+                     'trend_offset': self.trend_offset}
+
         ## Propogated later through other functions
         if self.tsmethod == 'AutoARIMA':
             self.ts_model = AutoARIMA(**self.args_tsmethod)
@@ -367,7 +381,7 @@ class IterativeTtestOutlierDetection:
 
     def fit_ts_model(
         self,
-        endog: pd.DataFrame,
+        endog: pd.Series,
         exog: Optional[pd.DataFrame],
         fit_args: Dict[str, Any],
         fix_order: bool=False):
@@ -686,7 +700,7 @@ class IterativeTtestOutlierDetection:
 
     def locate_outlier_oloop(
         self,
-        endog: pd.DataFrame,
+        endog: pd.Series,
         exog: Optional[pd.DataFrame],
         cval: PositiveFlt,
         id_start: NonnegativeInt,
@@ -738,7 +752,7 @@ class IterativeTtestOutlierDetection:
     def discard_outliers(
         self,
         located_ol: pd.DataFrame,
-        endog: pd.DataFrame,
+        endog: pd.Series,
         exog: Optional[pd.DataFrame],
         cval: PositiveFlt,
         fit_args: Dict[str, Any]) -> Tuple[pd.DataFrame, pd.DataFrame]:
@@ -812,6 +826,7 @@ class IterativeTtestOutlierDetection:
                 if len(rm_ol_table.index) > 0:
                     xregaux = xregaux.drop(columns=('ol_id_' + rm_ol_table['id'].astype(str)).to_list())
                     self.ts_model = backup ## Revert back to previously fitted model
+                    break
 
             xreg = xregaux
 
@@ -821,7 +836,7 @@ class IterativeTtestOutlierDetection:
 
         return located_ol, adj_endog
 
-    def fit(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame]=None, fit_args: Optional[Dict[str, Any]]=None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    def fit(self, endog: pd.Series, exog: Optional[pd.DataFrame]=None, fit_args: Optional[Dict[str, Any]]=None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Automatic Procedure for Detection of Outliers.
 
@@ -877,7 +892,83 @@ class IterativeTtestOutlierDetection:
         fit_args['start_params'] = np.concatenate((result['coefhat'].to_numpy(), self.get_raw_params()))
         self.fit_ts_model(endog, exog, fit_args, False)
 
-        return result, adj_endog, xreg
+        return IterativeTtestOutlierDetectionResult(endog, exog, self.ts_model, self.info, fit_args, result, adj_endog, xreg)
+
+
+class IterativeTtestOutlierDetectionResult:
+    """
+    Class for storing results of IterativeTtestOutlierDetection.
+    """
+
+    def __init__(self, endog: pd.Series, exog: pd.DataFrame, fitted_model: Any, detection_info: dict, fit_info: dict, located_ol: pd.DataFrame, adj_endog: pd.Series, xreg: pd.DataFrame):
+        """ Constructor for IterativeTtestOutlierDetectionResult.
+
+        :param endog: Endogenous time series.
+        :param exog: Exogenous time series.
+        :param fitted_model: Fitted model.
+        :param detection_info: Information about the detection process.
+        :param fit_info: Information about the fit process.
+        :param located_ol: Outlier matrix returned from fit() function.
+        :param adj_endog: Adjusted endogenous time series.
+        :param xreg: Outlier representation as regressors format.
+        """
+        self.endog = endog
+        self.exog = exog
+        self.fitted_model = fitted_model
+        self.detection_info = detection_info
+        self.fit_info = fit_info
+        self.located_ol = located_ol
+        self.adj_endog = adj_endog
+        self.xreg = xreg
+
+    def serialize_to_file(self, sql_path: str, dataset_name:Optional[str]=None):
+        """ Serialize the results to a file.
+
+        :param sql_path: Path to the file.
+        :param additional_note_dataset: Additional note for dataset.
+        :param additonal_note_model: Additional note for model.
+        """
+        def search_id_given_pk(conn, table_name, pks, id_col):
+            if table_name not in [x[0] for x in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
+                return 0
+            query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
+            for pk_name, pk_value in pks.items():
+                if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
+                    query += f" {pk_name} = '{pk_value}' AND"
+                else:
+                    query += f" {pk_name} = {pk_value} AND"
+            if len(pks) > 0:
+                query = query[:-4]
+            else:
+                query = query[:-6]
+            result = conn.execute(query).fetchall()
+            if result[0][0] is None:
+                return 0
+            else:
+                return result[0][0]
+
+        create_parent_directory(sql_path)
+        newconn = sqlite3.connect(sql_path)
+
+        ## Store Dataset Information
+        table_name = 'dataset_info'
+        id_col = 'dataset_id'
+        dataset_info = {'endog': self.endog.name,
+                        'exog': concat_list(self.exog.columns),
+                        'name': dataset_name,
+                        'n_obs': self.endog.shape[0]}
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(dataset_info), id_col)
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            dataset_info[id_col] = searched_id
+            pd.DataFrame(dataset_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
+            dataset = self.dataset.exog.copy()
+            
+            pd.concat((self.dataset.endog, self.dataset.exog), axis=1).to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
+        else:
+            warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
+            self.dataset.info[id_col] = searched_id
+
 
     # def plot_outliers(self, ol_matrix: pd.DataFrame, adjused_endog: pd.DataFrame, adjused_exog: pd.DataFrame):
     #     """
