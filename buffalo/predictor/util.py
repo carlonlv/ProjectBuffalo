@@ -15,7 +15,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..utility import (NonnegativeInt, PositiveInt, concat_list,
-                       create_parent_directory)
+                       create_parent_directory, search_id_given_pk)
 from .seasonality import ChisquaredtestSeasonalityDetection
 
 ALL_UNITS = ['D', 'H', 'T', 'S', 'L', 'U', 'N']
@@ -188,25 +188,6 @@ class ModelPerformance:
         :param additional_note_dataset: Additional notes to be added to describe the dataset.
         :param additonal_note_model: Additional notes to be added to describe the model.
         """
-        def search_id_given_pk(conn, table_name, pks, id_col):
-            if table_name not in [x[0] for x in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
-                return 0
-            query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
-            for pk_name, pk_value in pks.items():
-                if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
-                    query += f" {pk_name} = '{pk_value}' AND"
-                else:
-                    query += f" {pk_name} = {pk_value} AND"
-            if len(pks) > 0:
-                query = query[:-4]
-            else:
-                query = query[:-6]
-            result = conn.execute(query).fetchall()
-            if result[0][0] is None:
-                return 0
-            else:
-                return result[0][0]
-
         create_parent_directory(sql_path)
         newconn = sqlite3.connect(sql_path)
 

@@ -2,10 +2,13 @@
 This module contains algorithms for identifying/removing/predicting outliers.
 """
 import copy
+import os
+import pickle
 import sqlite3
 import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from warnings import warn
 
 import numpy as np
 import pandas as pd
@@ -13,10 +16,10 @@ from pmdarima import ARIMA, AutoARIMA
 from scipy import signal
 
 from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, concat_list,
-                       create_parent_directory)
+                       create_parent_directory, search_id_given_pk, deepen_dict)
 
 
-def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt):
+def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt) -> np.ndarray:
     """ 
     Find fitted polynomial time trend.
     
@@ -40,6 +43,9 @@ def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: Pos
     max_other_poly = other_poly.max()
 
     fitted_trend = np.zeros(time_obs.shape)
+
+    if np.isnan(max_other_poly):
+        return fitted_trend
     for i in range(max_other_poly):
         if i in other_poly.index:
             fitted_trend += other_poly[i] * np.power(time_obs, i)
@@ -296,25 +302,11 @@ class IterativeTtestOutlierDetection:
 
         self.args_tsmethod = args_tsmethod
 
-        self.info = {'types': self.types,
-                     'maxit': self.maxit,
-                     'maxit_iloop': self.maxit_iloop,
-                     'maxit_oloop': self.maxit_oloop,
-                     'cval': self.cval,
-                     'cval_reduce': self.cval_reduce,
-                     'discard_method': self.discard_method,
-                     'discard_cval': self.discard_cval,
-                     'tsmethod': self.tsmethod,
-                     'args_tsmethod': self.args_tsmethod,
-                     'trend_offset': self.trend_offset}
-
         ## Propogated later through other functions
         if self.tsmethod == 'AutoARIMA':
             self.ts_model = AutoARIMA(**self.args_tsmethod)
         else:
             self.ts_model = ARIMA(**self.args_tsmethod)
-        self.fitted_trend = None
-        self.poly_coeffs = None
 
     def get_resid(self) -> np.ndarray:
         """
@@ -576,7 +568,7 @@ class IterativeTtestOutlierDetection:
         :param endog: Response time series.
         :param located_ol: The output from remove_consecutive_outliers.
         :param use_fitted_coefs: Whether to use fitted coefficients as weights. If false, then weights are set to 1.
-        :return: A 2d array indicating the outlier effect on residuals (rows), for each outlier (cols).
+        :return: A 2d array indicating the outlier effect on responses (rows), for each outlier (cols).
         """
         order = self.get_order()
         seasonal_order = self.get_seasonal_order()
@@ -879,9 +871,9 @@ class IterativeTtestOutlierDetection:
 
         self.fit_ts_model(endog, exog, fit_args, False)
 
-        xreg = self.outlier_effect_on_responses(endog, result, False)
+        adj_xreg = self.outlier_effect_on_responses(endog, result, False)
         if exog is not None:
-            xreg = pd.concat([exog, xreg], axis=1)
+            adj_xreg = pd.concat([exog, adj_xreg], axis=1)
 
         if fit_args is None:
             fit_args = {}
@@ -892,7 +884,7 @@ class IterativeTtestOutlierDetection:
         fit_args['start_params'] = np.concatenate((result['coefhat'].to_numpy(), self.get_raw_params()))
         self.fit_ts_model(endog, exog, fit_args, False)
 
-        return IterativeTtestOutlierDetectionResult(endog, exog, self.ts_model, self.info, fit_args, result, adj_endog, xreg)
+        return IterativeTtestOutlierDetectionResult(self, endog, exog, fit_args, result, adj_endog, adj_xreg)
 
 
 class IterativeTtestOutlierDetectionResult:
@@ -900,75 +892,134 @@ class IterativeTtestOutlierDetectionResult:
     Class for storing results of IterativeTtestOutlierDetection.
     """
 
-    def __init__(self, endog: pd.Series, exog: pd.DataFrame, fitted_model: Any, detection_info: dict, fit_info: dict, located_ol: pd.DataFrame, adj_endog: pd.Series, xreg: pd.DataFrame):
+    def __init__(
+        self,
+        ol_detection: IterativeTtestOutlierDetection,
+        endog: pd.Series,
+        exog: Optional[pd.DataFrame],
+        fit_args: Dict[str, Any],
+        located_ol: pd.DataFrame,
+        adj_endog: pd.Series,
+        adj_xreg: pd.DataFrame):
         """ Constructor for IterativeTtestOutlierDetectionResult.
 
+        :param ol_detection: Iterative T-test Outlier detection object.
         :param endog: Endogenous time series.
         :param exog: Exogenous time series.
-        :param fitted_model: Fitted model.
-        :param detection_info: Information about the detection process.
-        :param fit_info: Information about the fit process.
+        :param fit_args: Additional arguments besides endog and exog to be passed into fit() method.
         :param located_ol: Outlier matrix returned from fit() function.
         :param adj_endog: Adjusted endogenous time series.
-        :param xreg: Outlier representation as regressors format.
+        :param adj_xreg: Outlier representation as regressors format.
         """
+        self.ol_detection = ol_detection
         self.endog = endog
         self.exog = exog
-        self.fitted_model = fitted_model
-        self.detection_info = detection_info
-        self.fit_info = fit_info
+        self.fit_args = fit_args
         self.located_ol = located_ol
         self.adj_endog = adj_endog
-        self.xreg = xreg
+        self.adj_xreg = adj_xreg
 
-    def serialize_to_file(self, sql_path: str, dataset_name:Optional[str]=None):
+    def serialize_to_file(self, sql_path: str, dataset_name:str='', algo_name:str=''):
         """ Serialize the results to a file.
 
         :param sql_path: Path to the file.
         :param additional_note_dataset: Additional note for dataset.
         :param additonal_note_model: Additional note for model.
         """
-        def search_id_given_pk(conn, table_name, pks, id_col):
-            if table_name not in [x[0] for x in newconn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
-                return 0
-            query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
-            for pk_name, pk_value in pks.items():
-                if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
-                    query += f" {pk_name} = '{pk_value}' AND"
-                else:
-                    query += f" {pk_name} = {pk_value} AND"
-            if len(pks) > 0:
-                query = query[:-4]
-            else:
-                query = query[:-6]
-            result = conn.execute(query).fetchall()
-            if result[0][0] is None:
-                return 0
-            else:
-                return result[0][0]
-
         create_parent_directory(sql_path)
         newconn = sqlite3.connect(sql_path)
 
         ## Store Dataset Information
-        table_name = 'dataset_info'
-        id_col = 'dataset_id'
-        dataset_info = {'endog': self.endog.name,
-                        'exog': concat_list(self.exog.columns),
-                        'name': dataset_name,
-                        'n_obs': self.endog.shape[0]}
-        searched_id = search_id_given_pk(newconn, table_name, pd.Series(dataset_info), id_col)
+        dataset = pd.concat((self.endog.to_frame(name=self.endog.name), self.exog), axis=1)
+        dataset_info = {
+            'endog': concat_list(self.endog.name),
+            'exog': concat_list(dataset.columns.drop(self.endog.name)),
+            'name': dataset_name,
+            'n_obs': self.dataset.shape[0]
+        }
+        searched_id = search_id_given_pk(newconn, 'dataset_info', pd.Series(dataset_info), 'dataset_id')
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
-            dataset_info[id_col] = searched_id
-            pd.DataFrame(dataset_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            dataset = self.dataset.exog.copy()
-            
-            pd.concat((self.dataset.endog, self.dataset.exog), axis=1).to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
+            searched_id = search_id_given_pk(newconn, 'dataset_info', {}, 'dataset_id') + 1
+            dataset_info['dataset_id'] = searched_id
+            pd.DataFrame(dataset_info, index=[0]).to_sql('dataset_info', newconn, if_exists='append', index=False)
+            dataset.to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
         else:
             warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
-            self.dataset.info[id_col] = searched_id
+            self.dataset.info['dataset_id'] = searched_id
 
+        ## Store Algorithm Information
+        algo_info = {
+            'types': self.ol_detection.types,
+            'maxit': self.ol_detection.maxit,
+            'maxit_iloop': self.ol_detection.maxit_iloop,
+            'maxit_oloop': self.ol_detection.maxit_oloop,
+            'cval': self.ol_detection.cval,
+            'cval_reduce': self.ol_detection.cval_reduce,
+            'discard_method': self.ol_detection.discard_method,
+            'discard_cval': self.ol_detection.discard_cval,
+            'tsmethod': self.ol_detection.tsmethod,
+            'args_tsmethod': self.ol_detection.args_tsmethod,
+            'name': algo_name}
+        searched_id = search_id_given_pk(newconn, 'algo_info', algo_info, 'algo_id')
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, 'algo_info', {}, 'algo_id') + 1
+            algo_info['algo_id'] = searched_id
+            pd.json_normalize(algo_info).to_sql('algo_info', newconn, index=False, if_exists='append')
+        else:
+            warn(f'algo_info with the same primary keys already exists with id {searched_id}, will not store model information.')
+            algo_info['algo_id'] = searched_id
+
+        ## Store Fitting Informatin
+        fit_info = {
+            'dataset_id': dataset_info['dataset_id'],
+            'algo_id': algo_info['algo_id'],
+            'fit_args': self.fit_args
+            }
+        searched_id = search_id_given_pk(newconn, 'fit_info', fit_info, 'fit_id')
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, 'fit_info', {}, 'fit_id') + 1
+            fit_info['fit_id'] = searched_id
+            pd.json_normalize(fit_info).to_sql('fit_info', newconn, index=False, if_exists='append')
+            with open(f'{os.path.dirname(sql_path)}/ol_detection_{searched_id}.pickle', 'wb') as fil:
+                pickle.dump(self.ol_detection.ts_model, fil)
+            pd.concat((self.adj_endog.to_frame(name=self.adj_endog.name), self.adj_xreg)).to_sql(f'adj_dataset_{searched_id}', newconn, index=True, index_label='time')
+            self.located_ol.assign(fit_id=searched_id).to_sql('located_ol', newconn, index=False, if_exists='append')
+        else:
+            warn(f'fit_info with the same primary keys already exists with id {searched_id}, will not store model information.')
+            fit_info['fit_id'] = searched_id
+
+        newconn.close()
+
+    @classmethod
+    def deserialize_from_file(cls, sql_path: str, fit_id: NonnegativeInt):
+        """ Deserialize the results from a file.
+
+        :param sql_path: Path to the file.
+        :param fit_id: Fit id.
+        """
+        newconn = sqlite3.connect(sql_path)
+
+        ## Load Fitting Information
+        fit_info = pd.read_sql_query(f'SELECT * FROM fit_info WHERE fit_id={fit_id}', newconn).T[0]
+        fit_info = deepen_dict(fit_info.to_dict())
+        adj_dataset = pd.read_sql(f'SELECT * FROM adj_dataset_{fit_id}', newconn, index_col='time')
+        adj_endog = adj_dataset.iloc[:,0]
+        adj_exog = adj_dataset.iloc[:,1:] if adj_dataset.shape[1] > 1 else None
+        with open(f'{os.path.dirname(sql_path)}/ol_detection_{fit_id}.pickle', 'rb') as fil:
+            model = pickle.load(fil)
+        located_ol = pd.read_sql(f'SELECT * FROM located_ol WHERE fit_id={fit_id}', newconn)
+
+        ## Load Algorithm Information
+        algo_info = pd.read_sql_query(f'SELECT * FROM algo_info WHERE algo_id={fit_info["algo_id"]}', newconn).T[0]
+        ol_detection = IterativeTtestOutlierDetection(**algo_info.drop('name').to_dict())
+        ol_detection.ts_model = model
+
+        ## Load Dataset Information
+        dataset = pd.read_sql(f'SELECT * FROM dataset_{fit_info["dataset_id"]}', newconn, index_col='time')
+        endog = dataset.iloc[:,0]
+        exog = dataset.iloc[:,1:] if dataset.shape[1] > 1 else None
+
+        return cls(ol_detection, endog, exog, fit_info['fit_args'], located_ol, adj_endog, adj_exog)
 
     # def plot_outliers(self, ol_matrix: pd.DataFrame, adjused_endog: pd.DataFrame, adjused_exog: pd.DataFrame):
     #     """

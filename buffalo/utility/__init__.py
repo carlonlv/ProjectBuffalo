@@ -164,7 +164,7 @@ def create_and_dodge_new_name(lst: List[str], prefix: str, suffix: str) -> str:
     :param suffix: The suffix value.
     :return: A dodged new name.
     """
-    patt = f'{prefix}\d*{suffix}'
+    patt = rf'{prefix}\d*{suffix}'
     lst = [x for x in lst if re.match(x, patt)]
     lst = [int(x.replace(prefix, '').replace(suffix, '')) if x != prefix + suffix else 0 for x in lst]
     if len(lst) == 0:
@@ -185,7 +185,7 @@ def split_string_to_words(concat_words: str) -> List[str]:
     words = [w if w.isupper() else re.sub(r'(?<!^)(?=[A-Z])', '_', w) for w in words]
     return words
 
-def flatten_dict(dct, parent_key='', sep='_'):
+def flatten_dict(dct, parent_key='', sep='.'):
     """
     Recursively flattens a dictionary by joining nested keys with the separator character.
 
@@ -202,3 +202,50 @@ def flatten_dict(dct, parent_key='', sep='_'):
         else:
             items.append((new_key, value))
     return dict(items)
+
+def deepen_dict(dct, sep='.'):
+    """
+    Reverse the flatten_dict function.
+
+    :param dct: A dictionary to be deepened.
+    :param sep: A string representing the separator character.
+    :return: A deepened dictionary.
+    """
+    items = []
+    for key, value in dct.items():
+        keys = key.split(sep)
+        if len(keys) > 1:
+            new_key = keys[0]
+            new_value = deepen_dict({sep.join(keys[1:]): value}, sep=sep)
+            items.append((new_key, new_value))
+        else:
+            items.append((key, value))
+    return dict(items)
+
+def search_id_given_pk(conn, table_name, pks, id_col):
+    """ Search the id given primary keys from SQL database.
+
+    :param conn: A connection to the database.
+    :param table_name: A string representing the table name.
+    :param pks: A dictionary of primary keys.
+    :param id_col: A string representing the id column name.
+    :return: An integer representing the id if found, otherwise 0. 0 will also
+        be returened if the table does not exist.
+    """
+    if table_name not in [x[0] for x in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
+        return 0
+    query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
+    for pk_name, pk_value in pks.items():
+        if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
+            query += f" {pk_name} = '{pk_value}' AND"
+        else:
+            query += f" {pk_name} = {pk_value} AND"
+    if len(pks) > 0:
+        query = query[:-4]
+    else:
+        query = query[:-6]
+    result = conn.execute(query).fetchall()
+    if result[0][0] is None:
+        return 0
+    else:
+        return result[0][0]
