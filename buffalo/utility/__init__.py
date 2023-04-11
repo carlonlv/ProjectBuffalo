@@ -220,7 +220,13 @@ def deepen_dict(dct, sep='.'):
             items.append((new_key, new_value))
         else:
             items.append((key, value))
-    return dict(items)
+    result = {}
+    for key, value in items:
+        if key in result:
+            result[key].update(value)
+        else:
+            result[key] = value
+    return result
 
 def search_id_given_pk(conn, table_name, pks, id_col):
     """ Search the id given primary keys from SQL database.
@@ -237,9 +243,9 @@ def search_id_given_pk(conn, table_name, pks, id_col):
     query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
     for pk_name, pk_value in pks.items():
         if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
-            query += f" {pk_name} = '{pk_value}' AND"
+            query += f" [{pk_name}] = '{pk_value}' AND"
         else:
-            query += f" {pk_name} = {pk_value} AND"
+            query += f" [{pk_name}] = {pk_value} AND"
     if len(pks) > 0:
         query = query[:-4]
     else:
