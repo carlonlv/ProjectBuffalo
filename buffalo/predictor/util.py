@@ -106,7 +106,7 @@ class TimeSeriesData(Dataset):
     """
     Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-    def __init__(self, endog: pd.DataFrame, exog: pd.DataFrame, seq_len: Optional[PositiveInt], name: Optional[str]=None):
+    def __init__(self, endog: pd.DataFrame, exog: pd.DataFrame, seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None):
         """
         Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
@@ -121,6 +121,7 @@ class TimeSeriesData(Dataset):
         self.endog = endog.sort_index(ascending=True)
         self.exog = exog.sort_index(ascending=True)
         self.seq_len = seq_len
+        self.label_len = label_len
         self.target_cols = torch.arange(self.endog.shape[1])
         self.name = name
 
@@ -131,18 +132,20 @@ class TimeSeriesData(Dataset):
 
     def __len__(self):
         if self.seq_len is None:
-            return len(self.dataset) - 1
+            return len(self.dataset) - self.label_len - 1
         else:
-            return len(self.dataset) - self.seq_len
+            return len(self.dataset) - self.seq_len - self.label_len
 
     def __getitem__(self, index):
-        ## index goes from 0 to self.__len__() - 1
+        ## index goes from 0 to self.__len__() - self.seq_len - self.label_len
         if self.seq_len is not None:
             start_index = index
             end_index = index + self.seq_len
-            return self.dataset[start_index:end_index,:], self.dataset[end_index,self.target_cols], end_index
+            ## last target index  goes from self.__len__() - self.label_len to self.__len__() - 1
+            return self.dataset[start_index:end_index,:], self.dataset[end_index:(end_index+self.label_len),self.target_cols], end_index
         else:
-            return self.dataset[:(index+1),:], self.dataset[index+1,self.target_cols], index + 1
+            ## last target index goes from self.__len__() - self.label_len - 1 to self.__len__() - 1
+            return self.dataset[:(index+1),:], self.dataset[(index+1):(index+self.label_len+1),self.target_cols], index + 1
 
 
 class ModelPerformance:

@@ -2,12 +2,13 @@
 Automatic procedure for detecting seasonality of time series.
 """
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import scipy.signal
 import statsmodels.api as sm
+from sklearn.linear_model import Lasso
 
 from ..utility import PositiveFlt, PositiveInt, concat_list
 
@@ -24,7 +25,7 @@ class ChisquaredtestSeasonalityDetection:
         """
         Initializer for the automated seasonality detector.
 
-        :param: alpha: The significance level to determine the significance of frequencies.
+        :param: alpha: The significance level to determine the significance of frequencies if backward stepwise is used, otherwise alpha represents lasso regularization parameter.
         :param max_freq_nums:
         """
         self.max_freq_nums = max_freq_nums
@@ -65,11 +66,13 @@ class ChisquaredtestSeasonalityDetection:
             exog = sm.add_constant(exog, has_constant='add')
         return exog
 
-    def fit(self, endog: pd.DataFrame, verbose: bool=True) -> Dict[str, Tuple[List[PositiveFlt], Any]]:
+    def fit(self, endog: pd.DataFrame, verbose: bool=True, discard_method: Literal['backward_step', 'lasso']='backward_step') -> Dict[str, Tuple[List[PositiveFlt], Any]]:
         """
         Fit Harmonic Regression using identified most signifcant frequencies.
 
         :param endog: The endogenous time series. Each column represents a time series.
+        :param verbose: Whether to print the detected seasonality.
+        :param discard_method: The method to discard insignificant regressors.
         :return: A dictionary with keys being the columns of endogenous.
         """
         result = {}
@@ -88,17 +91,21 @@ class ChisquaredtestSeasonalityDetection:
                 psd = psd[:self.max_freq_nums]
 
             exog = self.get_harmonic_exog(endog.shape[0], freq)
-            model = sm.OLS(endog[i].to_numpy(), exog.to_numpy(), missing='drop').fit()
-            for _ in range(exog.shape[1]):
-                pvalues = model.pvalues
-                max_pvalue = pvalues.max()
-                if max_pvalue > self.alpha:
-                    index = pvalues.argmax()
-                    exog = exog.drop(columns=exog.columns[index])
-                    model = sm.OLS(endog[i].to_numpy(), exog.to_numpy(), missing='drop').fit()
-                else:
-                    break
-            result[i] = (exog.columns, model)
+            if discard_method == 'backward_step':
+                model = sm.OLS(endog[i].to_numpy(), exog.to_numpy(), missing='drop').fit()
+                for _ in range(exog.shape[1]):
+                    pvalues = model.pvalues
+                    max_pvalue = pvalues.max()
+                    if max_pvalue > self.alpha:
+                        index = pvalues.argmax()
+                        exog = exog.drop(columns=exog.columns[index])
+                        model = sm.OLS(endog[i].to_numpy(), exog.to_numpy(), missing='drop').fit()
+                    else:
+                        break
+                result[i] = (exog.columns, model)
+            else:
+                model = Lasso(alpha=self.alpha).fit(exog.to_numpy(), endog[i].to_numpy())
+                result[i] = (exog.columns[model.coef_ != 0], model)
             if verbose:
                 print(f'Detected seasonality {concat_list(exog.columns.drop("const"))} from {i}.')
         return result
