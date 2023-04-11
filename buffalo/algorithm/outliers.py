@@ -5,18 +5,20 @@ import copy
 import os
 import pickle
 import sqlite3
-import warnings
 from functools import reduce
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 from warnings import warn
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from pmdarima import ARIMA, AutoARIMA
 from scipy import signal
 
 from ..utility import (NonnegativeInt, PositiveFlt, PositiveInt, concat_list,
-                       create_parent_directory, search_id_given_pk, deepen_dict)
+                       create_parent_directory, deepen_dict,
+                       search_id_given_pk)
 
 
 def find_poly_time_trend(params: pd.Series, resid: np.ndarray, trend_offset: PositiveInt) -> np.ndarray:
@@ -670,7 +672,7 @@ class IterativeTtestOutlierDetection:
             its += 1
 
         if its == self.maxit_iloop:
-            warnings.warn('Maximum number of iterations reached for inner loop.')
+            warn('Maximum number of iterations reached for inner loop.')
         return result.sort_values('id')
 
     def zero_inflated_first_resid(self):
@@ -738,7 +740,7 @@ class IterativeTtestOutlierDetection:
             its += 1
 
         if its == self.maxit_oloop:
-            warnings.warn('Maximum number of iterations reached for outer loop.')
+            warn('Maximum number of iterations reached for outer loop.')
         return result.sort_values('id')
 
     def discard_outliers(
@@ -761,10 +763,8 @@ class IterativeTtestOutlierDetection:
         endog = endog.copy()
 
         located_ol = self.remove_consecutive_outliers(located_ol, 'type_id') ## This is sorted
+        located_ol = located_ol.sort_values(['tstat'], ascending=False, key=abs).reset_index(drop=True) ## Sort by absolute value of tstat
         xreg = self.outlier_effect_on_responses(endog, located_ol, False)
-
-        if exog is not None:
-            xreg = pd.concat([exog, xreg], axis=1)
 
         if fit_args is None:
             fit_args = {}
@@ -774,6 +774,9 @@ class IterativeTtestOutlierDetection:
 
         its = 0
         if self.discard_method == 'en-masse':
+            if exog is not None:
+                xreg = pd.concat([exog, xreg], axis=1)
+
             while True:
                 fit_args['start_params'] = np.concatenate((located_ol['coefhat'].to_numpy(), self.get_raw_params()))
 
@@ -783,7 +786,7 @@ class IterativeTtestOutlierDetection:
                 ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
                 ol_param_table['tstat'] = ol_param_table['coef'] / ol_param_table['std err']
 
-                rm_ol_table = ol_param_table[ol_param_table['tstat'].abs() < cval]
+                rm_ol_table = ol_param_table[(ol_param_table['tstat'].abs() < cval) & ~('ol_id_' + ol_param_table['id'].astype(str)).isin(exog.columns if exog is not None else [])]
 
                 ol_param_table = ol_param_table[ol_param_table['tstat'].abs() >= cval]
 
@@ -796,37 +799,42 @@ class IterativeTtestOutlierDetection:
 
                 its += 1
         else:
-            located_ol = located_ol.sort_values(['tstat'], ascending=False, key=abs).reset_index(drop=True)
+            if exog is not None:
+                xregaux = exog.copy()
+            else:
+                xregaux = pd.DataFrame()
 
-            xregaux = pd.DataFrame()
             for i in located_ol.index:
                 xregaux = pd.concat([xregaux, xreg.loc[:,f'ol_id_{located_ol.loc[i,"id"]}']], axis=1)
 
-                self.fit_ts_model(endog, xregaux, fit_args, True)
-
                 backup = copy.deepcopy(self.ts_model)
+
+                self.fit_ts_model(endog, xregaux, fit_args, True)
 
                 param_table = self.get_params().reset_index().rename(columns={'': 'id'})
                 ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
                 ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
                 ol_param_table['tstat'] = ol_param_table['coef'] / ol_param_table['std err']
 
-                rm_ol_table = ol_param_table[ol_param_table['tstat'].abs() < cval]
-
-                ol_param_table = ol_param_table[ol_param_table['tstat'].abs() >= cval]
+                rm_ol_table = ol_param_table[(ol_param_table['tstat'].abs() < cval) & ~('ol_id_' + ol_param_table['id'].astype(str)).isin(exog.columns if exog is not None else [])]
 
                 if len(rm_ol_table.index) > 0:
-                    xregaux = xregaux.drop(columns=('ol_id_' + rm_ol_table['id'].astype(str)).to_list())
+                    xregaux = xregaux.drop(columns=f'ol_id_{located_ol.loc[i,"id"]}')
                     self.ts_model = backup ## Revert back to previously fitted model
                     break
 
             xreg = xregaux
+            param_table = self.get_params().reset_index().rename(columns={'': 'id'})
+            ol_param_table = param_table[param_table['id'].str.match(r'ol_id_\d+')].copy()
+            ol_param_table['id'] = ol_param_table['id'].str.replace(r'ol_id_', '', regex=False).astype(int)
+            ol_param_table['tstat'] = ol_param_table['coef'] / ol_param_table['std err']
+            located_ol = pd.merge(located_ol.drop(columns=['tstat', 'coefhat']), ol_param_table[['id', 'tstat', 'coef']].rename(columns={'coef': 'coefhat'}))
 
         ## Adjust endog: TODO: include VC
         ol_effect = np.matmul(xreg.to_numpy(), ol_param_table['coef'].to_numpy())
         adj_endog = endog - ol_effect
 
-        return located_ol, adj_endog
+        return located_ol, pd.Series(adj_endog, index=endog.index)
 
     def fit(self, endog: pd.Series, exog: Optional[pd.DataFrame]=None, fit_args: Optional[Dict[str, Any]]=None) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
@@ -861,15 +869,13 @@ class IterativeTtestOutlierDetection:
             located_ol = located_ol[~located_ol['t_index'].isin(result['t_index'])]
 
             if len(located_ol.index) > 0:
-                located_ol, adj_endog = self.discard_outliers(located_ol, adj_endog, exog, self.discard_cval, fit_args)
-                result = pd.concat([result, located_ol], axis=0)
+                located_ol, adj_endog = self.discard_outliers(located_ol, adj_endog, exog, self.discard_cval, fit_args) ## Adjusted endog: endog subtracted by identified outlier effects
+                result = pd.concat([result, located_ol], axis=0, ignore_index=True)
             else:
                 break
 
             its += 1
             cval0 = cval0 * (1 - self.cval_reduce)
-
-        self.fit_ts_model(endog, exog, fit_args, False)
 
         adj_xreg = self.outlier_effect_on_responses(endog, result, False)
         if exog is not None:
@@ -881,10 +887,9 @@ class IterativeTtestOutlierDetection:
         if 'cov_type' not in fit_args:
             fit_args['cov_type'] = 'robust_approx'
 
-        fit_args['start_params'] = np.concatenate((result['coefhat'].to_numpy(), self.get_raw_params()))
-        self.fit_ts_model(endog, exog, fit_args, False)
+        self.fit_ts_model(endog, adj_xreg, fit_args, False)
 
-        return IterativeTtestOutlierDetectionResult(self, endog, exog, fit_args, result, adj_endog, adj_xreg)
+        return IterativeTtestOutlierDetectionResult(self, endog, exog, fit_args, result)
 
 
 class IterativeTtestOutlierDetectionResult:
@@ -898,9 +903,7 @@ class IterativeTtestOutlierDetectionResult:
         endog: pd.Series,
         exog: Optional[pd.DataFrame],
         fit_args: Dict[str, Any],
-        located_ol: pd.DataFrame,
-        adj_endog: pd.Series,
-        adj_xreg: pd.DataFrame):
+        located_ol: pd.DataFrame):
         """ Constructor for IterativeTtestOutlierDetectionResult.
 
         :param ol_detection: Iterative T-test Outlier detection object.
@@ -908,16 +911,12 @@ class IterativeTtestOutlierDetectionResult:
         :param exog: Exogenous time series.
         :param fit_args: Additional arguments besides endog and exog to be passed into fit() method.
         :param located_ol: Outlier matrix returned from fit() function.
-        :param adj_endog: Adjusted endogenous time series.
-        :param adj_xreg: Outlier representation as regressors format.
         """
         self.ol_detection = ol_detection
         self.endog = endog
         self.exog = exog
         self.fit_args = fit_args
         self.located_ol = located_ol
-        self.adj_endog = adj_endog
-        self.adj_xreg = adj_xreg
 
     def serialize_to_file(self, sql_path: str, dataset_name:str='', algo_name:str=''):
         """ Serialize the results to a file.
@@ -935,7 +934,7 @@ class IterativeTtestOutlierDetectionResult:
             'endog': concat_list(self.endog.name),
             'exog': concat_list(dataset.columns.drop(self.endog.name)),
             'name': dataset_name,
-            'n_obs': self.dataset.shape[0]
+            'n_obs': dataset.shape[0]
         }
         searched_id = search_id_given_pk(newconn, 'dataset_info', pd.Series(dataset_info), 'dataset_id')
         if searched_id == 0:
@@ -945,7 +944,7 @@ class IterativeTtestOutlierDetectionResult:
             dataset.to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
         else:
             warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
-            self.dataset.info['dataset_id'] = searched_id
+            dataset_info.info['dataset_id'] = searched_id
 
         ## Store Algorithm Information
         algo_info = {
@@ -982,7 +981,6 @@ class IterativeTtestOutlierDetectionResult:
             pd.json_normalize(fit_info).to_sql('fit_info', newconn, index=False, if_exists='append')
             with open(f'{os.path.dirname(sql_path)}/ol_detection_{searched_id}.pickle', 'wb') as fil:
                 pickle.dump(self.ol_detection.ts_model, fil)
-            pd.concat((self.adj_endog.to_frame(name=self.adj_endog.name), self.adj_xreg)).to_sql(f'adj_dataset_{searched_id}', newconn, index=True, index_label='time')
             self.located_ol.assign(fit_id=searched_id).to_sql('located_ol', newconn, index=False, if_exists='append')
         else:
             warn(f'fit_info with the same primary keys already exists with id {searched_id}, will not store model information.')
@@ -1002,9 +1000,6 @@ class IterativeTtestOutlierDetectionResult:
         ## Load Fitting Information
         fit_info = pd.read_sql_query(f'SELECT * FROM fit_info WHERE fit_id={fit_id}', newconn).T[0]
         fit_info = deepen_dict(fit_info.to_dict())
-        adj_dataset = pd.read_sql(f'SELECT * FROM adj_dataset_{fit_id}', newconn, index_col='time')
-        adj_endog = adj_dataset.iloc[:,0]
-        adj_exog = adj_dataset.iloc[:,1:] if adj_dataset.shape[1] > 1 else None
         with open(f'{os.path.dirname(sql_path)}/ol_detection_{fit_id}.pickle', 'rb') as fil:
             model = pickle.load(fil)
         located_ol = pd.read_sql(f'SELECT * FROM located_ol WHERE fit_id={fit_id}', newconn)
@@ -1019,14 +1014,24 @@ class IterativeTtestOutlierDetectionResult:
         endog = dataset.iloc[:,0]
         exog = dataset.iloc[:,1:] if dataset.shape[1] > 1 else None
 
-        return cls(ol_detection, endog, exog, fit_info['fit_args'], located_ol, adj_endog, adj_exog)
+        return cls(ol_detection, endog, exog, fit_info['fit_args'], located_ol)
 
-    # def plot_outliers(self, ol_matrix: pd.DataFrame, adjused_endog: pd.DataFrame, adjused_exog: pd.DataFrame):
-    #     """
-    #     Helper function for plotting the results of algorithm.
+    def plot_series_decomposition(self):
+        """ Plot the decomposition of the original series. """
+        original_endog = self.endog.copy()
+        original_endog.name = 'original_endog'
+        residuals = pd.Series(self.ol_detection.get_resid(), index=original_endog.index)
+        residuals.name = 'residuals'
 
-    #     :param ol_matrix: Returned outlier matrix from fit() function.
-    #     :param adjusted_endog: Adjusted endogenous time series.
-    #     :param adjusted_exog: Adjusted exogenous time series.
-    #     """
-    #     merged_ts =
+        regressor = self.ol_detection.outlier_effect_on_responses(original_endog, located_ol=self.located_ol, use_fitted_coefs=True)
+        ol_effect = pd.Series(regressor.sum(axis=1).to_numpy(), index=original_endog.index, name='ol_effect')
+
+        arima_effect = (original_endog - ol_effect - residuals).rename('arima_effect')
+
+        decomposition = pd.concat((original_endog, residuals, arima_effect, ol_effect), axis=1)
+        decomposition = decomposition.reset_index().melt(id_vars='index', var_name='series', value_name='value')
+        plt1 = sns.lineplot(x='index', y='value', hue='series', data=decomposition)
+        plt1.set_title('Original Series Decomposition')
+        plt1.set_xlabel('index')
+        sns.scatterplot(x=original_endog.index[self.located_ol['t_index']], y='coefhat', hue='type_id', data=self.located_ol, ax=plt1)
+        plt.show()
