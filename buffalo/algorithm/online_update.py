@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 import pandas as pd
 import torch.nn as nn
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset
 
 from ..utility import NonnegativeInt, PositiveFlt, PositiveInt
 
@@ -51,12 +51,6 @@ class OnlineUpdateRule(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def init(self, dataset: Dataset, model: nn.Module, optimizer: Any, loss_func: Any):
-        """ Initialize the online update rule based on observed dataset, model, optimizer, and loss function.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
     def decide(self, t_index: NonnegativeInt) -> bool:
         """ Decide whether to update the model.
         """
@@ -87,6 +81,11 @@ class OnlineUpdateRule(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def collect_obs(self, t_index: NonnegativeInt, obs: Dataset):
+        """ Collect the observations."""
+        raise NotImplementedError
+
+    @abstractmethod
     def collect_train_stats(self, t_index: NonnegativeInt, train_loss: PositiveFlt, train_resid: pd.DataFrame):
         """ Collect the training statistics.
         """
@@ -103,14 +102,16 @@ class IncrementalBatchGradientDescent(OnlineUpdateRule):
     """ Incremental Batch Gradient Descent Update Rule.
     """
 
-    def __init__(self, epochs_per_update: PositiveInt, clip_grad_norm: Optional[PositiveFlt]=None) -> None:
+    def __init__(self, epochs_per_update: PositiveInt, update_freq: PositiveInt, clip_grad_norm: Optional[PositiveFlt]=None) -> None:
         super().__init__()
         self.epochs_per_update = epochs_per_update
         self.clip_grad_norm = clip_grad_norm
         self.initialized = False
+        self.update_freq = update_freq
         self.update_logs = pd.DataFrame()
         self.train_logs = pd.DataFrame()
         self.test_logs = pd.DataFrame()
+        self.next_update = 0
 
     def clear_logs(self):
         """ Clear the logs.
@@ -124,9 +125,24 @@ class IncrementalBatchGradientDescent(OnlineUpdateRule):
     
         :param t_index: The index of the current time step.
         """
-        t_index = t_index
         return self.epochs_per_update
 
     def get_clip_grad(self) -> PositiveFlt:
         """ Get the clip gradient. This update rule returns pre-defined clip gradient."""
         return self.clip_grad_norm
+
+    def decide(self, t_index: NonnegativeInt) -> bool:
+        """ Decide whether to update the model. This update rule always returns True.
+    
+        :param t_index: The index of the current time step.
+        """
+        if t_index >= self.next_update:
+            self.next_update += self.update_freq
+            return True
+        return False
+
+    def get_train_indices(self, t_index: NonnegativeInt) -> list:
+        """ Get the indices of the training data. This update rule returns all the indices.
+        """
+        return self.da
+        

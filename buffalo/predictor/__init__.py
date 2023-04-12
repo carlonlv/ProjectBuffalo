@@ -68,7 +68,7 @@ def train_and_evaluate_model(model: nn.Module,
     Train and Evaluate the model.
 
     :param model: The model to be trained.
-    :param optimizer: The optimizer.
+    :param  : The optimizer.
     :param loss_func: The loss function.
     :param dataset: The data set used to split the training, validation and test set.
     :param epochs_per_fold: The number of epochs per fold. Later folds will have more epochs because the model is trained on more data.
@@ -210,14 +210,14 @@ def train_and_evaluate_model_online(model: nn.Module,
     endog_cols = dataset.endog.columns
 
     update_rule.clear_logs()
-    update_rule.init(Subset(dataset, range(start_index)), model, optimizer, loss_func)
 
     train_resids = pd.DataFrame() ## Dictionary where keys are the time index where model is trained and values are the residuals.
     test_resids = pd.DataFrame() ## Dictionary where keys are the time index where model is tested and values are the residuals.
     train_records = pd.DataFrame() ## Records for the training and testing loss.
     start_time = timeit.default_timer()
     for t_index in tqdm(range(start_index, end_index), desc='Online training and testing.', position=0, leave=True):
-        ## Decide whether to train the model or not
+        ## Decide whether to train the model or not, assume tindex is already observed
+        update_rule.collect_obs(Subset(dataset, range(t_index, t_index+1)))
         is_train = update_rule.decide(t_index) ## Decide whether to update the model on index t_index
         if is_train:
             epochs = update_rule.get_epochs(t_index) ## Get the number of epochs to train the model on index t_index
