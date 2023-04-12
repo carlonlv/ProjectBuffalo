@@ -4,7 +4,7 @@
 import random
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any
+from typing import Any, Optional
 
 import pandas as pd
 import torch.nn as nn
@@ -63,7 +63,7 @@ class OnlineUpdateRule(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_epochs(self) -> PositiveInt:
+    def get_epochs(self, t_index: NonnegativeInt) -> PositiveInt:
         """ Get the number of epochs.
         """
         raise NotImplementedError
@@ -97,3 +97,36 @@ class OnlineUpdateRule(ABC):
         """ Collect the testing statistics.
         """
         raise NotImplementedError
+
+
+class IncrementalBatchGradientDescent(OnlineUpdateRule):
+    """ Incremental Batch Gradient Descent Update Rule.
+    """
+
+    def __init__(self, epochs_per_update: PositiveInt, clip_grad_norm: Optional[PositiveFlt]=None) -> None:
+        super().__init__()
+        self.epochs_per_update = epochs_per_update
+        self.clip_grad_norm = clip_grad_norm
+        self.initialized = False
+        self.update_logs = pd.DataFrame()
+        self.train_logs = pd.DataFrame()
+        self.test_logs = pd.DataFrame()
+
+    def clear_logs(self):
+        """ Clear the logs.
+        """
+        self.update_logs = pd.DataFrame()
+        self.train_logs = pd.DataFrame()
+        self.test_logs = pd.DataFrame()
+
+    def get_epochs(self, t_index: NonnegativeInt) -> PositiveInt:
+        """ Get the number of epochs. This update rule returns pre-defined number of epochs per update.
+    
+        :param t_index: The index of the current time step.
+        """
+        t_index = t_index
+        return self.epochs_per_update
+
+    def get_clip_grad(self) -> PositiveFlt:
+        """ Get the clip gradient. This update rule returns pre-defined clip gradient."""
+        return self.clip_grad_norm
