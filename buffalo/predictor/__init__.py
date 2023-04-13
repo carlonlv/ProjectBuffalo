@@ -211,18 +211,14 @@ def train_and_evaluate_model_online(model: nn.Module,
 
     update_rule.clear_logs()
 
-    train_resids = pd.DataFrame() ## Dictionary where keys are the time index where model is trained and values are the residuals.
-    test_resids = pd.DataFrame() ## Dictionary where keys are the time index where model is tested and values are the residuals.
-    train_records = pd.DataFrame() ## Records for the training and testing loss.
     start_time = timeit.default_timer()
     for t_index in tqdm(range(start_index, end_index), desc='Online training and testing.', position=0, leave=True):
         ## Decide whether to train the model or not, assume tindex is already observed
         update_rule.collect_obs(Subset(dataset, range(t_index, t_index+1)))
-        is_train = update_rule.decide(t_index) ## Decide whether to update the model on index t_index
-        if is_train:
+        train_indices = update_rule.get_train_indices(t_index) ## Get the indices of the data to be used to train the model
+        if len(train_indices) > 0:
             epochs = update_rule.get_epochs(t_index) ## Get the number of epochs to train the model on index t_index
             clip_grad = update_rule.get_clip_grad() ## Get the clip_grad value to train the model
-            train_indices = update_rule.get_train_indices(t_index) ## Get the indices of the data to be used to train the model
             train_loader = DataLoader(Subset(dataset, train_indices), **dataloader_args)
             for epoch in range(epochs):
                 train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, residual_cols=endog_cols, clip_grad=clip_grad)
@@ -233,25 +229,21 @@ def train_and_evaluate_model_online(model: nn.Module,
                         'train_end': max(train_indices),
                         'training_loss': train_loss
                     }, index=[t_index])
-                train_records = pd.concat((train_records, curr_record), axis=0)
-            update_rule.collect_train_stats(t_index, train_loss, train_resid)
-            train_resids = pd.concat((train_resids, train_resid.assign(t_index=t_index)), axis=0)
+            update_rule.collect_train_stats(t_index, train_loss, train_resid, curr_record)
         else:
             step_size = dataset.label_len
             test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+step_size+1)), batch_size=1)
             test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
             update_rule.collect_test_stats(t_index, test_loss, test_resid)
-            test_resids = pd.concat((test_resids, test_resid.assign(t_index=t_index)), axis=0)
     stop_time = timeit.default_timer()
 
     info = pd.Series({'loss_func': str(loss_func),
                       'optimizer': str(optimizer),
+                      'start_time': start_time,
+                      'stop_time': stop_time,
                       'elapsed_time': stop_time - start_time})
 
     return ModelPerformanceOnline(model=model,
                                   dataset=dataset,
                                   update_rule=update_rule,
-                                  training_record=train_records,
-                                  training_residuals=train_resids,
-                                  testing_residuals=test_resids,
                                   info=info)
