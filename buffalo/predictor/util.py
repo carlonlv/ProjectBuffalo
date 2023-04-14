@@ -239,7 +239,7 @@ class ModelPerformance:
             pd.DataFrame(self.training_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/model-{id_col}-{searched_id}.pt')
             self.training_record.assign(training_id = searched_id).to_sql('training_record', newconn, if_exists='append', index=False)
-            self.training_residuals.to_sql(f'training_residuals-{id_col}-{searched_id}', newconn, if_exists='append', index=True, index_label='index')
+            self.training_residuals.to_sql(f'training_residuals-{id_col}-{searched_id}', newconn, if_exists='replace', index=True, index_label='index')
         else:
             warn(f'training_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.training_info[id_col] = searched_id
@@ -253,7 +253,7 @@ class ModelPerformance:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.testing_info[id_col] = searched_id
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            self.testing_residuals.to_sql(f'testing_residuals-{id_col}-{searched_id}', newconn, if_exists='append', index=True, index_label='index')
+            self.testing_residuals.to_sql(f'testing_residuals-{id_col}-{searched_id}', newconn, if_exists='replace', index=True, index_label='index')
         else:
             warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.testing_info[id_col] = searched_id
@@ -275,7 +275,7 @@ class ModelPerformance:
 
         ## Load Training Information
         training_info = pd.read_sql_query(f'SELECT * FROM training_info WHERE training_id={testing_info["training_id"]}', newconn).T[0]
-        model = torch.load(f'{os.path.dirname(sql_path)}/model_{training_info["training_id"]}.pt')
+        model = torch.load(f'{os.path.dirname(sql_path)}/model-training_id-{training_info["training_id"]}.pt')
         training_record = pd.read_sql_query(f'SELECT * FROM training_record WHERE training_id={training_info["training_id"]}', newconn).drop(columns=['training_id'])
 
         ## Load Residuals
@@ -325,7 +325,7 @@ class ModelPerformance:
         plt1.set_xlabel('Time')
         plt1.set_ylabel('Price')
         plt.subplot(2, 1, 2)
-        residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
+        residual_long = pd.concat((self.training_residuals.assign(type = 'training'), self.testing_residuals.assign(type = 'testing')), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
         residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
         plt2 = sns.lineplot(data=residual_long, x='time', y='price', hue='series')
         plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black', linestyle='--')
@@ -439,12 +439,12 @@ class ModelPerformanceOnline:
             self.info[id_col] = searched_id
             pd.DataFrame(self.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/model-sim_id-{searched_id}.pt')
-            self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
-            self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
-            self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
-            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=True, index_label='time')
-            self.update_rule.train_residuals.to_sql(f'online_train_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time')
-            self.update_rule.test_residuals.to_sql(f'online_test_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.train_residuals.to_sql(f'online_train_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.test_residuals.to_sql(f'online_test_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
         else:
             warn(f'info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.info[id_col] = searched_id
@@ -467,30 +467,24 @@ class ModelPerformanceOnline:
         dataset_id = sim_info['dataset_id']
         model_id = sim_info['model_id']
 
-        update_logs = pd.read_sql_query(f'SELECT * FROM online_update_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
-        train_logs = pd.read_sql_query(f'SELECT * FROM online_train_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
-        test_logs = pd.read_sql_query(f'SELECT * FROM online_test_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
-        train_record = pd.read_sql_query(f'SELECT * FROM online_train_record-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
-        train_residuals = pd.read_sql_query(f'SELECT * FROM online_train_residuals-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
-        test_residuals = pd.read_sql_query(f'SELECT * FROM online_test_residuals-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        update_logs = pd.read_sql_query(f'SELECT * FROM "online_update_logs-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        train_logs = pd.read_sql_query(f'SELECT * FROM "online_train_logs-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        test_logs = pd.read_sql_query(f'SELECT * FROM "online_test_logs-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        train_record = pd.read_sql_query(f'SELECT * FROM "online_train_record-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        train_residuals = pd.read_sql_query(f'SELECT * FROM "online_train_residuals-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        test_residuals = pd.read_sql_query(f'SELECT * FROM "online_test_residuals-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
 
         model = torch.load(f'{os.path.dirname(sql_path)}/model-sim_id-{sim_id}.pt')
 
         update_info = pd.read_sql_query(f'SELECT * FROM updaterule_info WHERE updaterule_id={update_rule_id}', newconn).T[0]
-        update_rule = OnlineUpdateRuleFactory(update_info['name'], **update_info.to_dict())
-        update_info.update_logs = update_logs
-        update_info.train_logs = train_logs
-        update_info.test_logs = test_logs
-        update_info.train_record = train_record
-        update_info.train_residuals = train_residuals
-        update_info.test_residuals = test_residuals
+        update_rule = OnlineUpdateRuleFactory.create_update_rule(update_info['name'], **update_info.to_dict())
 
         ## Load Model Information
         model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={model_id}', newconn).T[0]
 
         ## Load Dataset Information
         dataset_info = pd.read_sql_query(f'SELECT * FROM dataset_info WHERE dataset_id={dataset_id}', newconn).T[0]
-        data_info = pd.read_sql_query(f'SELECT * FROM dataset-{dataset_id}', newconn, index_col='time', parse_dates=['time'])
+        data_info = pd.read_sql_query(f'SELECT * FROM "dataset_{dataset_id}"', newconn, index_col='time', parse_dates=['time'])
         endog_cols = dataset_info['endog'].split(',')
         exog_cols = dataset_info['exog'].split(',')
         dataset = TimeSeriesData(data_info[endog_cols], data_info[exog_cols], dataset_info['seq_len'] if not pd.isna(dataset_info['seq_len']) else None, dataset_info['name'])
@@ -498,33 +492,31 @@ class ModelPerformanceOnline:
         newconn.close()
 
         result = cls(model, dataset, update_rule, sim_info)
+        result.update_rule.update_logs = update_logs
+        result.update_rule.train_logs = train_logs
+        result.update_rule.test_logs = test_logs
+        result.update_rule.train_record = train_record
+        result.update_rule.train_residuals = train_residuals
+        result.update_rule.test_residuals = test_residuals
         return result
 
     def plot_training_records(self):
         """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
         """
         def helper(time_step):
-            training_records = self.update_info.training_record[self.update_info.training_record.index == time_step].copy()
+            training_records = self.update_rule.train_record.query(f't_index == {time_step}').copy()
             training_records['fold'] = training_records['fold'].astype(int).astype(str)
-            plt.subplot(2, 1, 1) # Create subplot for training loss plot
             plt1 = sns.lineplot(x='epoch', y='training_loss', hue='fold', data=training_records)
             plt1.set_title('Training Loss over Time')
             plt1.set_xlabel('Epoch')
             plt1.set_ylabel('Training Loss')
-            plt.subplot(2, 1, 2) # Create subplot for validation loss plot
-            plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records)
-            plt2.set_title('Validation Loss over Time')
-            plt2.set_xlabel('Epoch')
-            plt2.set_ylabel('Validation Loss')
-
-            plt.subplots_adjust(hspace=0.5)
             plt.show()
 
         # create a widget for selecting the time step
-        time_step_slider = widgets.IntSlider(min=self.update_info.training_record.index.min(), max=self.update_info.training_record.index.max())
+        time_step_slider = widgets.SelectionSlider(options=self.update_rule.train_record['t_index'].unique(), description='Time step:')
 
         # link the widget to the plot function
-        widgets.interact(helper, step=time_step_slider)
+        widgets.interact(helper, time_step=time_step_slider)
 
         # display the widget
         display(time_step_slider)
@@ -540,22 +532,21 @@ class ModelPerformanceOnline:
             plt1.set_xlabel('Time')
             plt1.set_ylabel('Price')
             plt.subplot(2, 1, 2)
-            residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).query(f't_index == {time_step}').reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
+            residual_long = pd.concat((self.update_rule.train_residuals.query(f't_index == {time_step}').assign(type='training'), self.update_rule.test_residuals), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
             residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
             plt2 = sns.lineplot(data=residual_long, x='time', y='price', hue='series')
-            plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black', linestyle='--')
+            plt2.axvline(x=endog_long['time'].iloc[self.update_rule.testing_residuals.index.min()], color='black', linestyle='--')
             plt2.set_title('Residual Time Series')
             plt2.set_xlabel('Time')
             plt2.set_ylabel('Price')
-
             plt.subplots_adjust(hspace=0.5)
             plt.show()
 
         # create a widget for selecting the time step
-        time_step_slider = widgets.IntSlider(min=self.update_info.training_record.index.min(), max=self.update_info.training_record.index.max())
+        time_step_slider = widgets.SelectionSlider(options=self.update_rule.train_residuals['t_index'].unique(), description='Time step:')
 
         # link the widget to the plot function
-        widgets.interact(helper, step=time_step_slider)
+        widgets.interact(helper, time_step=time_step_slider)
 
         # display the widget
         display(time_step_slider)

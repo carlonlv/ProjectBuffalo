@@ -241,11 +241,11 @@ def train_and_evaluate_model_online(model: nn.Module,
             update_rule.collect_test_stats(t_index, test_loss, test_resid)
     stop_time = timeit.default_timer()
 
-    info = pd.Series({'loss_func': str(loss_func),
-                      'optimizer': str(optimizer),
-                      'start_time': start_time,
-                      'stop_time': stop_time,
-                      'elapsed_time': stop_time - start_time})
+    info = {'loss_func': str(loss_func),
+            'optimizer': str(optimizer),
+            'start_time': start_time,
+            'stop_time': stop_time,
+            'elapsed_time': stop_time - start_time}
 
     return ModelPerformanceOnline(model=model,
                                   dataset=dataset,
