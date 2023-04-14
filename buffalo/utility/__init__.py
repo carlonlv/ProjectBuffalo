@@ -63,14 +63,14 @@ class PositiveFloat(float):
 
 def do_call(func: Callable, **kwargs):
     """
-    Call function, ignore nonexited arguments
+    Call function, ignore nonexited arguments and keywords with None values.
 
     :param func: Function to be executed.
     :param **kwargs: Additional keyword arguments to be passed into func.
     :return: Returned results from func.
     """
     sig = inspect.signature(func)
-    filtered_dict = {filter_item[0] : filter_item[1] for filter_item in kwargs.items() if filter_item[0] in sig.parameters.keys()}
+    filtered_dict = {filter_item[0] : filter_item[1] for filter_item in kwargs.items() if filter_item[0] in sig.parameters.keys() and filter_item[1] is not None}
     return func(**filtered_dict)
 
 def do_call_for_each_group(data: pd.DataFrame, func: Callable, grouping: Optional[Union[List, str]]=None, **kwargs):

@@ -7,13 +7,16 @@ import sqlite3
 from typing import Optional
 from warnings import warn
 
+import ipywidgets as widgets
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import torch
+from IPython.display import display
 from torch.utils.data import Dataset
 
+from ..algorithm import OnlineUpdateRuleFactory
 from ..utility import (NonnegativeInt, PositiveInt, concat_list,
                        create_parent_directory, search_id_given_pk)
 from .seasonality import ChisquaredtestSeasonalityDetection
@@ -143,10 +146,10 @@ class TimeSeriesData(Dataset):
             start_index = index
             end_index = index + self.seq_len ## Predictor length: index - index + seq_len -1, Label: end_index -- end_index + label_len - 1
             ## last target index  goes from self.__len__() - self.label_len to self.__len__() - 1
-            return self.dataset[start_index:end_index,:], self.dataset[end_index:(end_index+self.label_len),self.target_cols], range(end_index, end_index+self.label_len)
+            return self.dataset[start_index:end_index,:], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
         else:
             ## last target index goes from self.__len__() - self.label_len - 1 to self.__len__() - 1
-            return self.dataset[:index,:], self.dataset[index:(index+self.label_len),self.target_cols], range(index, index+self.label_len)
+            return self.dataset[:index,:], self.dataset[index:(index+self.label_len),self.target_cols], torch.arange(index, index+self.label_len)
 
 
 class ModelPerformance:
@@ -234,9 +237,9 @@ class ModelPerformance:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.training_info[id_col] = searched_id
             pd.DataFrame(self.training_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            torch.save(self.model, f'{os.path.dirname(sql_path)}/model_{searched_id}.pt')
+            torch.save(self.model, f'{os.path.dirname(sql_path)}/model-{id_col}-{searched_id}.pt')
             self.training_record.assign(training_id = searched_id).to_sql('training_record', newconn, if_exists='append', index=False)
-            self.training_residuals.assign(id = searched_id, type = 'training').to_sql(f'residuals_{self.training_info["dataset_id"]}', newconn, if_exists='append', index=True, index_label='index')
+            self.training_residuals.to_sql(f'training_residuals-{id_col}-{searched_id}', newconn, if_exists='append', index=True, index_label='index')
         else:
             warn(f'training_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.training_info[id_col] = searched_id
@@ -250,7 +253,7 @@ class ModelPerformance:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.testing_info[id_col] = searched_id
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            self.testing_residuals.assign(id = searched_id, type = 'testing').to_sql(f'residuals_{self.training_info["dataset_id"]}', newconn, if_exists='append', index=True, index_label='index')
+            self.testing_residuals.to_sql(f'testing_residuals-{id_col}-{searched_id}', newconn, if_exists='append', index=True, index_label='index')
         else:
             warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.testing_info[id_col] = searched_id
@@ -276,8 +279,8 @@ class ModelPerformance:
         training_record = pd.read_sql_query(f'SELECT * FROM training_record WHERE training_id={training_info["training_id"]}', newconn).drop(columns=['training_id'])
 
         ## Load Residuals
-        testing_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{training_info["dataset_id"]} WHERE id={testing_info["testing_id"]} and type="testing"', newconn, index_col='index').drop(columns=['id', 'type'])
-        training_residuals = pd.read_sql_query(f'SELECT * FROM residuals_{training_info["dataset_id"]} WHERE id={training_info["training_id"]} and type="training"', newconn, index_col='index').drop(columns=['id', 'type'])
+        testing_residuals = pd.read_sql_query(f'SELECT * FROM testing_residuals_{testing_info["testing_id"]}', newconn, index_col='index')
+        training_residuals = pd.read_sql_query(f'SELECT * FROM training_residuals_{training_info["training_id"]}', newconn, index_col='index')
 
         ## Load Model Information
         model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={training_info["model_id"]}', newconn).T[0]
@@ -323,7 +326,7 @@ class ModelPerformance:
         plt1.set_ylabel('Price')
         plt.subplot(2, 1, 2)
         residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
-        residual_long['time'] = endog_long['time'].iloc[residual_long['time']]
+        residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
         plt2 = sns.lineplot(data=residual_long, x='time', y='price', hue='series')
         plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black', linestyle='--')
         plt2.set_title('Residual Time Series')
@@ -367,4 +370,192 @@ class ModelPerformanceOnline:
         self.model = model
         self.dataset = dataset
         self.info = info
-        self. update_rule = update_rule
+        self.update_rule = update_rule
+
+    def serialize_to_file(self, sql_path: str, additional_note_dataset: str='', additonal_note_model: str='') -> None:
+        """ Write the performance of the model to a csv file and the trained model to file.
+
+        Primary keys for dataset is dataset_id, primary keys for model is model_id, dataset_id, train_start, train_end.
+        :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
+        :param additional_note_dataset: Additional notes to be added to describe the dataset.
+        :param additonal_note_model: Additional notes to be added to describe the model.
+        """
+        create_parent_directory(sql_path)
+        newconn = sqlite3.connect(sql_path)
+
+        ## Store Dataset Information
+        table_name = 'dataset_info'
+        id_col = 'dataset_id'
+        self.dataset.info['additional_notes'] = additional_note_dataset
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.dataset.info).drop('create_time'), id_col)
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.dataset.info[id_col] = searched_id
+            pd.DataFrame(self.dataset.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
+            pd.concat((self.dataset.endog, self.dataset.exog), axis=1).to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
+        else:
+            warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
+            self.dataset.info[id_col] = searched_id
+
+        ## Store Model Information
+        table_name = 'model_info'
+        id_col = 'model_id'
+        self.model.info['additional_notes'] = additonal_note_model
+        searched_id = search_id_given_pk(newconn, table_name, self.model.info, id_col)
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.model.info[id_col] = searched_id
+            if searched_id == 1:
+                pd.DataFrame(self.model.info, index=[0]).to_sql(table_name, newconn, index=False)
+            else:
+                pd.concat((pd.read_sql_query(f'SELECT * FROM {table_name}', newconn), pd.DataFrame(self.model.info, index=[0])), axis=0, ignore_index=True).to_sql(table_name, newconn, index=False, if_exists='replace')
+        else:
+            warn(f'model_info with the same primary keys already exists with id {searched_id}, will not store model information.')
+            self.model.info[id_col] = searched_id
+
+        ## Store Update Information
+        table_name = 'updaterule_info'
+        id_col = 'updaterule_id'
+        searched_id = search_id_given_pk(newconn, table_name, self.update_rule.info, id_col)
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.update_rule.info[id_col] = searched_id
+            if searched_id == 1:
+                pd.DataFrame(self.update_rule.info, index=[0]).to_sql(table_name, newconn, index=False)
+            else:
+                pd.concat((pd.read_sql_query(f'SELECT * FROM {table_name}', newconn), pd.DataFrame(self.update_rule.info, index=[0])), axis=0, ignore_index=True).to_sql(table_name, newconn, index=False, if_exists='replace')
+        else:
+            warn(f'model_info with the same primary keys already exists with id {searched_id}, will not store model information.')
+            self.update_rule.info[id_col] = searched_id
+
+        table_name = 'online_sim_info'
+        id_col = 'sim_id'
+        self.info['dataset_id'] = self.dataset.info['dataset_id']
+        self.info['model_id'] = self.model.info['model_id']
+        self.info['updaterule_id'] = self.update_rule.info['updaterule_id']
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.info).drop(['start_time', 'stop_time', 'elapsed_time']).to_dict(), id_col)
+        if searched_id == 0:
+            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
+            self.info[id_col] = searched_id
+            pd.DataFrame(self.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
+            torch.save(self.model, f'{os.path.dirname(sql_path)}/model-sim_id-{searched_id}.pt')
+            self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.train_residuals.to_sql(f'online_train_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time')
+            self.update_rule.test_residuals.to_sql(f'online_test_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time')
+        else:
+            warn(f'info ({searched_id}) with the same primary keys already exists, will not store model information.')
+            self.info[id_col] = searched_id
+
+        newconn.close()
+
+    @classmethod
+    def deserialize_from_file(cls, sql_path: str, sim_id: NonnegativeInt):
+        """ Read the performance of the model from a csv file and the trained model from file.
+
+        :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
+        :param testing_id: The id of the testing. Other information will be inferred and loaded.
+        :return: The loaded ModelPerformance object.
+        """
+        newconn = sqlite3.connect(sql_path)
+
+        sim_info = pd.read_sql_query(f'SELECT * FROM online_sim_info WHERE sim_id={sim_id}', newconn).T[0]
+
+        update_rule_id = sim_info['updaterule_id']
+        dataset_id = sim_info['dataset_id']
+        model_id = sim_info['model_id']
+
+        update_logs = pd.read_sql_query(f'SELECT * FROM online_update_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        train_logs = pd.read_sql_query(f'SELECT * FROM online_train_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        test_logs = pd.read_sql_query(f'SELECT * FROM online_test_logs-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        train_record = pd.read_sql_query(f'SELECT * FROM online_train_record-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        train_residuals = pd.read_sql_query(f'SELECT * FROM online_train_residuals-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+        test_residuals = pd.read_sql_query(f'SELECT * FROM online_test_residuals-sim_id-{sim_id}', newconn, index_col='time', parse_dates=['time'])
+
+        model = torch.load(f'{os.path.dirname(sql_path)}/model-sim_id-{sim_id}.pt')
+
+        update_info = pd.read_sql_query(f'SELECT * FROM updaterule_info WHERE updaterule_id={update_rule_id}', newconn).T[0]
+        update_rule = OnlineUpdateRuleFactory(update_info['name'], **update_info.to_dict())
+        update_info.update_logs = update_logs
+        update_info.train_logs = train_logs
+        update_info.test_logs = test_logs
+        update_info.train_record = train_record
+        update_info.train_residuals = train_residuals
+        update_info.test_residuals = test_residuals
+
+        ## Load Model Information
+        model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={model_id}', newconn).T[0]
+
+        ## Load Dataset Information
+        dataset_info = pd.read_sql_query(f'SELECT * FROM dataset_info WHERE dataset_id={dataset_id}', newconn).T[0]
+        data_info = pd.read_sql_query(f'SELECT * FROM dataset-{dataset_id}', newconn, index_col='time', parse_dates=['time'])
+        endog_cols = dataset_info['endog'].split(',')
+        exog_cols = dataset_info['exog'].split(',')
+        dataset = TimeSeriesData(data_info[endog_cols], data_info[exog_cols], dataset_info['seq_len'] if not pd.isna(dataset_info['seq_len']) else None, dataset_info['name'])
+        dataset.info = dataset_info
+        newconn.close()
+
+        result = cls(model, dataset, update_rule, sim_info)
+        return result
+
+    def plot_training_records(self):
+        """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
+        """
+        def helper(time_step):
+            training_records = self.update_info.training_record[self.update_info.training_record.index == time_step].copy()
+            training_records['fold'] = training_records['fold'].astype(int).astype(str)
+            plt.subplot(2, 1, 1) # Create subplot for training loss plot
+            plt1 = sns.lineplot(x='epoch', y='training_loss', hue='fold', data=training_records)
+            plt1.set_title('Training Loss over Time')
+            plt1.set_xlabel('Epoch')
+            plt1.set_ylabel('Training Loss')
+            plt.subplot(2, 1, 2) # Create subplot for validation loss plot
+            plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records)
+            plt2.set_title('Validation Loss over Time')
+            plt2.set_xlabel('Epoch')
+            plt2.set_ylabel('Validation Loss')
+
+            plt.subplots_adjust(hspace=0.5)
+            plt.show()
+
+        # create a widget for selecting the time step
+        time_step_slider = widgets.IntSlider(min=self.update_info.training_record.index.min(), max=self.update_info.training_record.index.max())
+
+        # link the widget to the plot function
+        widgets.interact(helper, step=time_step_slider)
+
+        # display the widget
+        display(time_step_slider)
+
+    def plot_residuals(self):
+        """ Plot original time series and residual time series, used to check the performance of the model. Vertical line in the residual plot indicates the start of the testing period.
+        """
+        def helper(time_step):
+            endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
+            plt.subplot(2, 1, 1)
+            plt1 = sns.lineplot(data=endog_long, x='time', y='price', hue='series')
+            plt1.set_title('Original Time Series')
+            plt1.set_xlabel('Time')
+            plt1.set_ylabel('Price')
+            plt.subplot(2, 1, 2)
+            residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).query(f't_index == {time_step}').reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
+            residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
+            plt2 = sns.lineplot(data=residual_long, x='time', y='price', hue='series')
+            plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black', linestyle='--')
+            plt2.set_title('Residual Time Series')
+            plt2.set_xlabel('Time')
+            plt2.set_ylabel('Price')
+
+            plt.subplots_adjust(hspace=0.5)
+            plt.show()
+
+        # create a widget for selecting the time step
+        time_step_slider = widgets.IntSlider(min=self.update_info.training_record.index.min(), max=self.update_info.training_record.index.max())
+
+        # link the widget to the plot function
+        widgets.interact(helper, step=time_step_slider)
+
+        # display the widget
+        display(time_step_slider)

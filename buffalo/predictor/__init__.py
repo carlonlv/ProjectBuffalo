@@ -3,6 +3,7 @@ This module contains models for trend predictor for time series.
 """
 import timeit
 from copy import deepcopy
+from itertools import product
 from math import ceil, floor
 from typing import Any, List, Optional
 
@@ -32,18 +33,19 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
     :return: The average loss and the residuals.
     """
     loss_sum = 0
-    curr_resid = pd.DataFrame(columns=residual_cols) ## Initalize the residuals to be nan
+    col_name = [f'{x}:{y}' for x, y in product(residual_cols, range(1, 1+model.n_ahead))]
+    curr_resid = pd.DataFrame(columns=col_name) ## Initalize the residuals to be nan
     for batch in data_loader:
         optimizer.zero_grad()
 
         data, label, index = batch
         data = data.to(model.device)
         label = label.to(model.device)
-        outputs = model(data)
-        pred = outputs
+        pred = model(data) ## Shape: (batch_size, n_ahead, n_endog)
 
         loss = loss_func(pred, label)
-        curr_resid = (pd.DataFrame((label - pred).detach().cpu().numpy(), index=index.squeeze().cpu().numpy(), columns=residual_cols)).combine_first(curr_resid)
+        resid = label - pred
+        curr_resid = (pd.DataFrame(resid.reshape(resid.shape[0],-1).detach().cpu().numpy(), index=index[:,0].cpu().numpy(), columns=col_name)).combine_first(curr_resid)
 
         if is_train:
             loss.backward()
@@ -220,6 +222,7 @@ def train_and_evaluate_model_online(model: nn.Module,
             epochs = update_rule.get_epochs(t_index) ## Get the number of epochs to train the model on index t_index
             clip_grad = update_rule.get_clip_grad() ## Get the clip_grad value to train the model
             train_loader = DataLoader(Subset(dataset, train_indices), **dataloader_args)
+            train_records = []
             for epoch in range(epochs):
                 train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, residual_cols=endog_cols, clip_grad=clip_grad)
                 curr_record = pd.DataFrame({
@@ -229,7 +232,8 @@ def train_and_evaluate_model_online(model: nn.Module,
                         'train_end': max(train_indices),
                         'training_loss': train_loss
                     }, index=[t_index])
-            update_rule.collect_train_stats(t_index, train_loss, train_resid, curr_record)
+                train_records.append(curr_record)
+            update_rule.collect_train_stats(t_index, train_loss, train_resid, pd.concat(train_records, axis=0))
         else:
             step_size = dataset.label_len
             test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+step_size+1)), batch_size=1)

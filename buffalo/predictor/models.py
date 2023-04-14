@@ -3,12 +3,12 @@ This module contains models for trend predictor for time series.
 """
 
 
-from typing import Literal, Optional, Tuple
+from typing import Any, Callable, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
-from ..utility import NonnegativeInt, PositiveInt, Prob
+from ..utility import NonnegativeInt, PositiveFlt, PositiveInt, Prob
 
 
 class RNN(nn.Module):
@@ -20,6 +20,8 @@ class RNN(nn.Module):
                  input_size: PositiveInt,
                  hidden_size: PositiveInt,
                  output_size: PositiveInt,
+                 n_ahead: PositiveInt=1,
+                 softmax_ouput: bool=False,
                  num_layers: PositiveInt=1,
                  nonlinearity: Literal['tanh', 'relu']='tanh',
                  bias: bool=True,
@@ -32,6 +34,8 @@ class RNN(nn.Module):
         :param input_size: The number of expected features in the input x, ie, number of features per time step.
         :param hidden_size: The number of features in the hidden state h.
         :param output_size: The number of features in the output.
+        :param n_ahead: The number of time steps to predict. Default: 1.
+        :param softmax_ouput: If True, the output will be passed through a softmax function. Default: False.
         :param num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results. Default: 1.
         :param nonlinearity: The non-linearity to use. Can be either 'tanh' or 'relu'. Default: 'tanh'.
         :param bias: If False, then the layer does not use bias weights b_ih and b_hh. Default: True.
@@ -47,10 +51,12 @@ class RNN(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_size = hidden_size
+        self.n_ahead = n_ahead
         self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
         self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
+        self.f_c = nn.Sequential(self.f_c, nn.Softmax(dim=-1)) if softmax_ouput else self.f_c
         batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
         batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
         rnn_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -61,6 +67,8 @@ class RNN(nn.Module):
                      'input_size': input_size,
                      'hidden_size': hidden_size,
                      'output_size': output_size,
+                     'n_ahead': n_ahead,
+                     'softmax_ouput': softmax_ouput,
                      'num_layers': num_layers,
                      'nonlinearity': nonlinearity,
                      'bias': bias,
@@ -85,9 +93,10 @@ class RNN(nn.Module):
         input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
         input_v = input_v.reshape(batch_num, -1, self.input_size)
         output_v, hidden_v = self.model(input_v, h_0)
-        output_v = output_v[:, -1, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1)  # Select last layer hidden state
-        output_v = torch.cat((output_v, hidden_v), dim=1)
+        output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
+        hidden_v = hidden_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]  # Select last layer hidden state
+        hidden_v = hidden_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
+        output_v = torch.cat((output_v, hidden_v), dim=-1)
         return self.f_c(output_v)
 
 
@@ -100,6 +109,8 @@ class LSTM(nn.Module):
                  input_size: PositiveInt,
                  hidden_size: PositiveInt,
                  output_size: PositiveInt,
+                 n_ahead: PositiveInt=1,
+                 softmax_ouput: bool=False,
                  num_layers: PositiveInt=1,
                  bias: bool=True,
                  dropout: Prob=0,
@@ -112,6 +123,8 @@ class LSTM(nn.Module):
         :param input_size: The number of expected features in the input x, ie, number of features per time step.
         :param hidden_size: The number of features in the hidden state h.
         :param output_size: The number of features in the output.
+        :param n_ahead: Number of time steps to predict. Default: 1.
+        :param softmax_ouput: If True, apply softmax to output. Default: False.
         :param num_layers: Number of recurrent layers. E.g., setting num_layers=2 would mean stacking two RNNs together to form a stacked RNN, with the second RNN taking in outputs of the first RNN and computing the final results. Default: 1.
         :param bias: If False, then the layer does not use bias weights b_ih and b_hh. Default: True.
         :param dropout: If non-zero, introduces a Dropout layer on the outputs of each RNN layer except the last layer, with dropout probability equal to dropout. Default: 0.
@@ -126,10 +139,12 @@ class LSTM(nn.Module):
         self.input_size = input_size
         self.output_size = output_size
         self.hidden_size = hidden_size
+        self.n_ahead = n_ahead
         self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
         self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
+        self.f_c = nn.Sequential(self.f_c, nn.Softmax(dim=-1)) if softmax_ouput else self.f_c
         batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
         batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
         lstm_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -140,6 +155,8 @@ class LSTM(nn.Module):
                      'input_size': input_size,
                      'hidden_size': hidden_size,
                      'output_size': output_size,
+                     'n_ahead': n_ahead,
+                     'softmax_ouput': softmax_ouput,
                      'num_layers': num_layers,
                      'bias': bias,
                      'dropout': dropout,
@@ -163,8 +180,115 @@ class LSTM(nn.Module):
         input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
         input_v = input_v.reshape(batch_num, -1, self.input_size)
         output_v, (hidden_v, cell_v) = self.model(input_v, h_0)
-        output_v = output_v[:, -1, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-1] if not self.bidirectional else torch.cat((hidden_v[-1], hidden_v[-2]), dim=1) # Select last hidden state
-        cell_v = cell_v[-1] if not self.bidirectional else torch.cat((cell_v[-1], cell_v[-2]), dim=1) # Select last cell state
-        output_v = torch.cat((output_v, hidden_v, cell_v), dim=1)
+        output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
+        hidden_v = hidden_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]  # Select last layer hidden state
+        hidden_v = hidden_v.reshape(batch_num, self.n_ahead, -1)
+        cell_v = cell_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]
+        cell_v = cell_v.reshape(batch_num, self.n_ahead, -1)
+        output_v = torch.cat((output_v, hidden_v, cell_v), dim=-1)
         return self.f_c(output_v)
+
+
+class Transformer(nn.Module):
+    """ Transformer class to model outlier probability.
+
+    """
+
+    def __init__(self,
+                 d_model,
+                 output_dimension,
+                 n_ahead: PositiveInt = 1,
+                 softmax_ouput: bool=False,
+                 causal_encoder: bool=False,
+                 nhead: PositiveInt=8,
+                 num_encoder_layers: PositiveInt=6,
+                 num_decoder_layers: PositiveInt=6,
+                 dim_feedforward: PositiveInt=2048,
+                 dropout: Prob=0.1,
+                 activation: Union[str, Callable[[torch.Tensor], torch.Tensor]]='relu',
+                 custom_encoder: Optional[Any]=None,
+                 custom_decoder: Optional[Any]=None,
+                 layer_norm_eps: PositiveFlt=1e-05,
+                 norm_first: bool=False,
+                 use_gpu: bool=True) -> None:
+        """
+        Initializer for the Transformer class.
+
+        :param d_model: the number of expected features in the encoder/decoder inputs (default=512), embedding size.
+        :param output_dimension: the number of expected features in the final inputs, embedding size.
+        :param n_ahead: the number of future steps to predict (default=1).
+        :param softmax_ouput: Whether to use softmax to output probability (default=False).
+        :param causal_encoder: Whether to use causal encoder (default=False).
+        :param nhead: the number of heads in the multiheadattention models (default=8).
+        :param num_encoder_layers: the number of sub-encoder-layers in the encoder (default=6).
+        :param num_decoder_layers: the number of sub-decoder-layers in the decoder (default=6).
+        :param dim_feedforward: the dimension of the feedforward network model (default=2048).
+        :param dropout: the dropout value (default=0.1).
+        :param activation: the activation function of intermediate layer, relu or gelu (default=relu).
+        :param custom_encoder: custom encoder (default=None).
+        :param custom_decoder: custom decoder (default=None).
+        :param layer_norm_eps: the eps value in layer normalization components (default=1e-05).
+        :param norm_first: if True, normalization is done before each sub-layer (default=False).
+        :param use_gpu: whether to use gpu (default=True).
+        """
+        super().__init__()
+        if use_gpu:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = 'cpu'
+        self.n_ahead = n_ahead
+        self.causal_encoder = causal_encoder
+        self.model = nn.Transformer(d_model=d_model,
+                                    nhead=nhead,
+                                    num_encoder_layers=num_encoder_layers,
+                                    num_decoder_layers=num_decoder_layers,
+                                    dim_feedforward=dim_feedforward,
+                                    dropout=dropout,
+                                    activation=activation,
+                                    custom_encoder=custom_encoder,
+                                    custom_decoder=custom_decoder,
+                                    layer_norm_eps=layer_norm_eps,
+                                    batch_first=True,
+                                    norm_first=norm_first,
+                                    device=self.device)
+        self.f_c = nn.Sequential(nn.Linear(d_model, output_dimension), nn.Softmax(dim=-1) if softmax_ouput else nn.Identity())
+        transformer_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        transformer_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.model.named_parameters() if 'weight' in name])
+        fc_param_count = sum(p.numel() for p in self.f_c.parameters() if p.requires_grad)
+        fc_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.f_c.named_parameters() if 'weight' in name])
+        self.info = {'name': 'Transformer',
+                     'n_ahead': n_ahead,
+                     'softmax_ouput': softmax_ouput,
+                     'causal_encoder': causal_encoder,
+                     'd_model': d_model,
+                     'nhead': nhead,
+                     'num_encoder_layers': num_encoder_layers,
+                     'num_decoder_layers': num_decoder_layers,
+                     'dim_feedforward': dim_feedforward,
+                     'dropout': dropout,
+                     'activation': activation,
+                     'custom_encoder': str(custom_encoder),
+                     'custom_decoder': str(custom_decoder),
+                     'layer_norm_eps': layer_norm_eps,
+                     'norm_first': norm_first,
+                     'param_count': transformer_param_count + fc_param_count,
+                     'connection_count': transformer_connection_count + fc_connection_count}
+
+    def forward(self, src, tgt) -> torch.Tensor:
+        """
+        Forward propagation. Memory mask is not used, assume the target series depends on both the past and future of the source series.
+        Causal masks are applied for both source and target series to prevent both series from looking into the future.
+        src_key_padding_mask, tgt_key_padding_mask and memory_key_padding_mask are not used, assume no paddings are used to ensure the same length of all series. Padding may be used to mask time steps with missing values.
+
+        :param src: the sequence to the encoder (required). (N, S, E) for batched.
+        :param tgt: the sequence to the decoder (required). (N, T, E) for batched.
+        :return: the output of the transformer.
+        """
+        src_causal_mask = self.model.generate_square_subsequent_mask(src.size(1)).to(self.device) if self.causal_encoder else None ## (S, S)
+        tgt_causal_mask = self.model.generate_square_subsequent_mask(tgt.size(1)).to(self.device) ## (T, T)
+        xvc = self.model(src=src,
+                         tgt=tgt,
+                         src_mask=src_causal_mask,
+                         tgt_mask=tgt_causal_mask)
+        xvc = self.f_c(xvc) ## (N, T, E) x (E, O) -> (N, T, O)
+        return xvc
