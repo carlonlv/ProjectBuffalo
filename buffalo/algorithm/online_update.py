@@ -4,7 +4,7 @@
 import random
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import pandas as pd
 from torch.utils.data import ConcatDataset, Dataset
@@ -80,8 +80,8 @@ class OnlineUpdateRule(ABC):
         :param train_record: The training record.
         """
         self.train_logs = pd.concat((self.train_logs, pd.DataFrame({'train_loss': train_loss}, index=[t_index])), axis=0)
-        self.train_record = pd.concat((self.train_record, train_record.assign(t_index=t_index)), axis=0)
-        self.train_residuals = pd.concat((self.train_residuals, train_resid.assign(t_index=t_index)), axis=0)
+        self.train_record = pd.concat((self.train_record, train_record.assign(t_index=t_index)), ignore_index=True, axis=0)
+        self.train_residuals = pd.concat((self.train_residuals, train_resid.assign(t_index=t_index)), ignore_index=True, axis=0)
 
     def collect_test_stats(self, t_index: NonnegativeInt, test_loss: PositiveFlt, test_resid: pd.DataFrame):
         """ Collect and store the testing statistics.
@@ -91,22 +91,10 @@ class OnlineUpdateRule(ABC):
         :param test_resid: The testing residuals.
         """
         self.test_logs = pd.concat((self.test_logs, pd.DataFrame({'test_loss': test_loss}, index=[t_index])), axis=0)
-        self.test_residuals = pd.concat((self.test_residuals, test_resid.assign(t_index=t_index)), axis=0)
+        self.test_residuals = pd.concat((self.test_residuals, test_resid.assign(t_index=t_index)), ignore_index=True, axis=0)
 
     @abstractmethod
-    def get_epochs(self, t_index: NonnegativeInt) -> PositiveInt:
-        """ Get the number of epochs.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_clip_grad(self) -> PositiveFlt:
-        """ Get the clip gradient.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_train_indices(self, t_index: NonnegativeInt) -> list:
+    def get_train_settings(self, t_index: NonnegativeInt) -> Tuple[list, PositiveInt, PositiveFlt]:
         """ Get the indices of the training data.
         """
         raise NotImplementedError
@@ -116,26 +104,37 @@ class IncrementalBatchGradientDescent(OnlineUpdateRule):
     """ Incremental Batch Gradient Descent Update Rule.
     """
 
-    def __init__(self, epochs_per_update: PositiveInt, update_freq: PositiveInt, clip_grad_norm: Optional[PositiveFlt]=None, pretrained=False) -> None:
+    def __init__(self,
+                 epochs: PositiveInt,
+                 epochs_per_update: PositiveInt,
+                 update_freq: PositiveInt,
+                 clip_grad_norm_train: Optional[PositiveFlt]=None,
+                 clip_grad_norm_update: Optional[PositiveFlt]=None,
+                 pretrained=False) -> None:
         """ Initialize the Incremental Batch Gradient Descent Update Rule. Incremental Batch Gradient Descent Update Rule updates the model with a pre-defined frequency and the new dataset is sweeped through the model for a pre-defined number of epochs.
         
+        :param epochs: The number of epochs for initial training.
         :param epochs_per_update: The number of epochs per update.
-        :param update_freq: The frequency of 
-        updates.
-        :param clip_grad_norm: The clip gradient norm. If None, no clipping will be performed.
+        :param update_freq: The frequency of updates.
+        :param clip_grad_norm_train: The clip gradient norm. If None, no clipping will be performed.
+        :param clip_grad_norm_update: The clip gradient norm. If None, no clipping will be performed.
         :param pretrained: Whether the model is pretrained. If not pretrained, the model will be trained upon encountering the first batch of data.
         """
         super().__init__()
+        self.epochs = epochs
         self.epochs_per_update = epochs_per_update
-        self.clip_grad_norm = clip_grad_norm
+        self.clip_grad_norm_train = clip_grad_norm_train
+        self.clip_grad_norm_update = clip_grad_norm_update
         self.update_freq = update_freq
         self.next_update = 0
         self.pretrained = pretrained
         self.name = 'IncrementalBatchGradientDescent'
         self.info = {
+            'epochs': epochs,
             'epochs_per_update': epochs_per_update,
             'update_freq': update_freq,
-            'clip_grad_norm': clip_grad_norm,
+            'clip_grad_norm_train': clip_grad_norm_train,
+            'clip_grad_norm_update': clip_grad_norm_update,
             'pretrained': pretrained,
             'name': self.name
         }
@@ -145,18 +144,7 @@ class IncrementalBatchGradientDescent(OnlineUpdateRule):
         """
         return rf'Incremental Batch Gradient Descent Update Rule ( \n epochs_per_update={self.epochs_per_update}, \n update_freq={self.update_freq}, \n clip_grad_norm={self.clip_grad_norm} \n )'
 
-    def get_epochs(self, t_index: NonnegativeInt) -> PositiveInt:
-        """ Get the number of epochs. This update rule returns pre-defined number of epochs per update.
-
-        :param t_index: The index of the current time step.
-        """
-        return self.epochs_per_update
-
-    def get_clip_grad(self) -> PositiveFlt:
-        """ Get the clip gradient. This update rule returns pre-defined clip gradient."""
-        return self.clip_grad_norm
-
-    def get_train_indices(self, t_index: NonnegativeInt) -> list:
+    def get_train_settings(self, t_index: NonnegativeInt) -> Tuple[list, PositiveInt, PositiveFlt]:
         """ Get the indices of the training data. This update rule returns all the indices.
 
         :param t_index: The index of the current time step.
@@ -165,13 +153,15 @@ class IncrementalBatchGradientDescent(OnlineUpdateRule):
         if not self.pretrained and self.next_update == 0:
             end_index = t_index+1
             self.next_update = t_index + self.update_freq
-            self.update_logs = pd.concat((self.update_logs, pd.DataFrame({'t_index': [t_index], 'start_index': 0, 'end_index': end_index-1})))
-            return range(end_index)
+            self.update_logs = pd.concat((self.update_logs,
+                                          pd.DataFrame({'t_index': [t_index], 'start_index': 0, 'end_index': end_index-1, 'epochs': self.epochs, 'clip_grad_norm': self.clip_grad_norm_train})))
+            return range(end_index), self.epochs, self.clip_grad_norm_train
         if t_index >= self.next_update:
             start_index = t_index-self.update_freq+1
             end_index = t_index+1
-            self.update_logs = pd.concat((self.update_logs, pd.DataFrame({'t_index': [t_index], 'start_index': start_index, 'end_index': end_index-1})))
+            self.update_logs = pd.concat((self.update_logs,
+                                          pd.DataFrame({'t_index': [t_index], 'start_index': start_index, 'end_index': end_index-1, 'epochs': self.epochs_per_update, 'clip_grad_norm': self.clip_grad_norm_update})))
             self.next_update = t_index + self.update_freq
-            return range(start_index, end_index)
+            return range(start_index, end_index), self.epochs_per_update, self.clip_grad_norm_update
         else:
-            return range(0)
+            return range(0), 0, None

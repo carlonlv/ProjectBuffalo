@@ -33,6 +33,7 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
     :return: The average loss and the residuals.
     """
     loss_sum = 0
+    total_samples = 0
     col_name = [f'{x}:{y}' for x, y in product(residual_cols, range(1, 1+model.n_ahead))]
     curr_resid = pd.DataFrame(columns=col_name) ## Initalize the residuals to be nan
     for batch in data_loader:
@@ -53,9 +54,13 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
                 clip_grad_norm_(model.parameters(), clip_grad)
             optimizer.step()
 
-        loss_sum += loss.item()
+        if loss_func.reduction == 'sum':
+            loss_sum += loss.item()
+        else:
+            loss_sum += loss.item() * data.size(0)
+        total_samples += data.size(0)
 
-    return loss_sum / len(data_loader), curr_resid
+    return loss_sum / total_samples, curr_resid
 
 def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
@@ -217,28 +222,25 @@ def train_and_evaluate_model_online(model: nn.Module,
     for t_index in tqdm(range(start_index, end_index), desc='Online training and testing.', position=0, leave=True):
         ## Decide whether to train the model or not, assume tindex is already observed
         update_rule.collect_obs(Subset(dataset, range(t_index, t_index+1)))
-        train_indices = update_rule.get_train_indices(t_index) ## Get the indices of the data to be used to train the model
+        train_indices, epochs, clip_grad = update_rule.get_train_settings(t_index) ## Get the indices of the data to be used to train the model
         if len(train_indices) > 0:
-            epochs = update_rule.get_epochs(t_index) ## Get the number of epochs to train the model on index t_index
-            clip_grad = update_rule.get_clip_grad() ## Get the clip_grad value to train the model
             train_loader = DataLoader(Subset(dataset, train_indices), **dataloader_args)
             train_records = []
             for epoch in range(epochs):
                 train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, residual_cols=endog_cols, clip_grad=clip_grad)
                 curr_record = pd.DataFrame({
-                        'fold': 0,
-                        'epoch': epoch,
-                        'train_start': min(train_indices),
-                        'train_end': max(train_indices),
-                        'training_loss': train_loss
-                    }, index=[t_index])
+                    'fold': 0,
+                    'epoch': epoch,
+                    'train_start': min(train_indices),
+                    'train_end': max(train_indices),
+                    'training_loss': train_loss
+                }, index=[t_index])
                 train_records.append(curr_record)
             update_rule.collect_train_stats(t_index, train_loss, train_resid, pd.concat(train_records, axis=0))
-        else:
-            step_size = dataset.label_len
-            test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+step_size+1)), batch_size=1)
-            test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
-            update_rule.collect_test_stats(t_index, test_loss, test_resid)
+
+        test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+dataset.label_len+1)), batch_size=1)
+        test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
+        update_rule.collect_test_stats(t_index, test_loss, test_resid)
     stop_time = timeit.default_timer()
 
     info = {'loss_func': str(loss_func),

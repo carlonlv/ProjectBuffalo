@@ -238,10 +238,14 @@ def search_id_given_pk(conn, table_name, pks, id_col):
     :return: An integer representing the id if found, otherwise 0. 0 will also
         be returened if the table does not exist.
     """
+    column_names = pd.read_sql(f"PRAGMA table_info({table_name})", conn)['name']
+
     if table_name not in [x[0] for x in conn.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]:
         return 0
     query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
     for pk_name, pk_value in pks.items():
+        if pk_name not in column_names:
+            return 0
         if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
             query += f" [{pk_name}] = '{pk_value}' AND"
         else:
