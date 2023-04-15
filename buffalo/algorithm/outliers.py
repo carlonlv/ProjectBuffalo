@@ -936,12 +936,12 @@ class IterativeTtestOutlierDetectionResult:
             'name': dataset_name,
             'n_obs': dataset.shape[0]
         }
-        searched_id = search_id_given_pk(newconn, 'dataset_info', pd.Series(dataset_info), 'dataset_id')
+        searched_id = search_id_given_pk(newconn, 'ol_dataset_info', pd.Series(dataset_info), 'dataset_id')
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, 'dataset_info', {}, 'dataset_id') + 1
+            searched_id = search_id_given_pk(newconn, 'ol_dataset_info', {}, 'dataset_id') + 1
             dataset_info['dataset_id'] = searched_id
-            pd.DataFrame(dataset_info, index=[0]).to_sql('dataset_info', newconn, if_exists='append', index=False)
-            dataset.to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
+            pd.DataFrame(dataset_info, index=[0]).to_sql('ol_dataset_info', newconn, if_exists='append', index=False)
+            dataset.to_sql(f'ol_dataset_{searched_id}', newconn, index=True, index_label='time')
         else:
             warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
             dataset_info['dataset_id'] = searched_id
@@ -964,14 +964,14 @@ class IterativeTtestOutlierDetectionResult:
             algo_info['args_tsmethod.order'] = str(algo_info['args_tsmethod.order'])
         if 'args_tsmethod.seasonal_order' in algo_info:
             algo_info['args_tsmethod.seasonal_order'] = str(algo_info['args_tsmethod.seasonal_order'])
-        searched_id = search_id_given_pk(newconn, 'algo_info', algo_info, 'algo_id')
+        searched_id = search_id_given_pk(newconn, 'ol_algo_info', algo_info, 'algo_id')
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, 'algo_info', {}, 'algo_id') + 1
+            searched_id = search_id_given_pk(newconn, 'ol_algo_info', {}, 'algo_id') + 1
             algo_info['algo_id'] = searched_id
             if searched_id == 1:
-                pd.DataFrame(algo_info, index=[0]).to_sql('algo_info', newconn, index=False)
+                pd.DataFrame(algo_info, index=[0]).to_sql('ol_algo_info', newconn, index=False)
             else:
-                pd.concat((pd.read_sql_query('SELECT * FROM algo_info', newconn), pd.DataFrame(algo_info, index=[0])), axis=0, ignore_index=True).to_sql('algo_info', newconn, index=False, if_exists='replace')
+                pd.concat((pd.read_sql_query('SELECT * FROM algo_info', newconn), pd.DataFrame(algo_info, index=[0])), axis=0, ignore_index=True).to_sql('ol_algo_info', newconn, index=False, if_exists='replace')
         else:
             warn(f'algo_info with the same primary keys already exists with id {searched_id}, will not store model information.')
             algo_info['algo_id'] = searched_id
@@ -983,14 +983,14 @@ class IterativeTtestOutlierDetectionResult:
             'fit_args': self.fit_args
             }
         fit_info = flatten_dict(fit_info)
-        searched_id = search_id_given_pk(newconn, 'fit_info', fit_info, 'fit_id')
+        searched_id = search_id_given_pk(newconn, 'ol_fit_info', fit_info, 'fit_id')
         if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, 'fit_info', {}, 'fit_id') + 1
+            searched_id = search_id_given_pk(newconn, 'ol_fit_info', {}, 'fit_id') + 1
             fit_info['fit_id'] = searched_id
             if searched_id == 1:
-                pd.DataFrame(fit_info, index=[0]).to_sql('fit_info', newconn, index=False)
+                pd.DataFrame(fit_info, index=[0]).to_sql('ol_fit_info', newconn, index=False)
             else:
-                pd.concat((pd.read_sql_query('SELECT * FROM fit_info', newconn), pd.DataFrame(fit_info, index=[0])), axis=0, ignore_index=True).to_sql('fit_info', newconn, index=False, if_exists='replace')
+                pd.concat((pd.read_sql_query('SELECT * FROM ol_fit_info', newconn), pd.DataFrame(fit_info, index=[0])), axis=0, ignore_index=True).to_sql('fit_info', newconn, index=False, if_exists='replace')
             with open(f'{os.path.dirname(sql_path)}/ol_detection_{searched_id}.pickle', 'wb') as fil:
                 pickle.dump(self.ol_detection.ts_model, fil)
             self.located_ol.assign(fit_id=searched_id).to_sql('located_ol', newconn, index=False, if_exists='append')
@@ -1010,14 +1010,14 @@ class IterativeTtestOutlierDetectionResult:
         newconn = sqlite3.connect(sql_path)
 
         ## Load Fitting Information
-        fit_info = pd.read_sql_query(f'SELECT * FROM fit_info WHERE fit_id={fit_id}', newconn).T[0]
+        fit_info = pd.read_sql_query(f'SELECT * FROM ol_fit_info WHERE fit_id={fit_id}', newconn).T[0]
         fit_info = deepen_dict(fit_info.to_dict())
         with open(f'{os.path.dirname(sql_path)}/ol_detection_{fit_id}.pickle', 'rb') as fil:
             model = pickle.load(fil)
         located_ol = pd.read_sql(f'SELECT * FROM located_ol WHERE fit_id={fit_id}', newconn)
 
         ## Load Algorithm Information
-        algo_info = pd.read_sql_query(f'SELECT * FROM algo_info WHERE algo_id={fit_info["algo_id"]}', newconn).T[0]
+        algo_info = pd.read_sql_query(f'SELECT * FROM ol_algo_info WHERE algo_id={fit_info["algo_id"]}', newconn).T[0]
         algo_info = algo_info.drop(['name', 'algo_id'])
         algo_info['types'] = pd.read_json(algo_info['types'])
         if 'args_tsmethod.order' in algo_info.index:
@@ -1029,7 +1029,7 @@ class IterativeTtestOutlierDetectionResult:
         ol_detection.ts_model = model
 
         ## Load Dataset Information
-        dataset = pd.read_sql(f'SELECT * FROM dataset_{fit_info["dataset_id"]}', newconn, index_col='time')
+        dataset = pd.read_sql(f'SELECT * FROM ol_dataset_{fit_info["dataset_id"]}', newconn, index_col='time')
         endog = dataset.iloc[:,0]
         exog = dataset.iloc[:,1:] if dataset.shape[1] > 1 else None
 
