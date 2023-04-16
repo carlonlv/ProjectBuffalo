@@ -244,7 +244,7 @@ def search_id_given_pk(conn, table_name, pks, id_col):
         return 0
     query = f"SELECT MAX({id_col}) FROM {table_name} WHERE"
     for pk_name, pk_value in pks.items():
-        if pk_name not in column_names:
+        if pk_name not in column_names.values:
             return 0
         if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
             query += f" [{pk_name}] = '{pk_value}' AND"
