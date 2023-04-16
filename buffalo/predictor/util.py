@@ -4,7 +4,8 @@ This module contains helper functions to manipulate predictors.
 
 import os
 import sqlite3
-from typing import List, Optional
+from functools import reduce
+from typing import List, Optional, Tuple
 from warnings import warn
 
 import ipywidgets as widgets
@@ -111,7 +112,7 @@ class TimeSeriesData(Dataset):
     """
     Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-    def __init__(self, endog: pd.DataFrame, exog: pd.DataFrame, seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None):
+    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None, split_endog: Optional[List[Tuple[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
         """
         Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
@@ -122,19 +123,39 @@ class TimeSeriesData(Dataset):
         :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used.
         :param label_len: The length of label. The length of the label (number of steps to predict ahead).
         :param name: The convenient name for the dataset.
+        :param split_endog: Used to control the splitting of endog dataset. If not provided, the data will not be splitted. Otherwise, endog will be splitted into multiple tensors of equal length during sampling. This is useful when model is Autoencoder/decoder and endog should be splitted into input sequence and target sequence. Note that the order of the tuples in this list should correspond to the positional arguments of the model.
+        :param target_indices: The indices of the target columns. If not provided, all columns of endog will be used.
         """
-        assert endog.shape[0] == exog.shape[0]
+        assert target_indices is None or all(np.array(target_indices) < endog.shape[1])
+        assert split_endog is None or reduce(lambda x, y: x + y, split_endog) == set(range(endog.shape[1]))
+
         self.endog = endog.sort_index(ascending=True)
-        self.exog = exog.sort_index(ascending=True)
         self.seq_len = seq_len
         self.label_len = label_len
-        self.target_cols = torch.arange(self.endog.shape[1])
+        self.target_cols = torch.arange(self.endog.shape[1]) if target_indices is None else torch.tensor(target_indices)
         self.name = name
+        self.split_endog = None if split_endog is None else [torch.tensor(x) for x in split_endog]
 
         endog_array = torch.Tensor(self.endog.to_numpy())
-        exog_array = torch.Tensor(self.exog.to_numpy())
-        self.dataset = torch.cat((endog_array.unsqueeze(1) if isinstance(self.endog, pd.Series) else endog_array, exog_array), dim=1)
-        self.info = {'endog': concat_list(self.endog.columns), 'exog': concat_list(self.exog.columns), 'seq_len': seq_len, 'name': name, 'n_obs': self.dataset.shape[0], 'start_time': self.endog.index[0], 'end_time': self.endog.index[-1], 'create_time': pd.Timestamp.now()}
+        if exog is not None:
+            assert endog.shape[0] == exog.shape[0]
+            self.exog = exog.sort_index(ascending=True)
+
+            exog_array = torch.Tensor(self.exog.to_numpy())
+            self.dataset = torch.cat((endog_array, exog_array), dim=1)
+        else:
+            self.dataset = endog_array
+        self.info = {'endog': concat_list(self.endog.columns),
+                     'exog': concat_list(self.exog.columns) if self.exog is not None else '',
+                     'label_len': label_len,
+                     'seq_len': seq_len,
+                     'name': name,
+                     'split_endog': split_endog,
+                     'target_indices': target_indices,
+                     'n_obs': self.dataset.shape[0],
+                     'start_time': self.endog.index[0],
+                     'end_time': self.endog.index[-1],
+                     'create_time': pd.Timestamp.now()}
 
     def __len__(self):
         if self.seq_len is None:
@@ -148,11 +169,55 @@ class TimeSeriesData(Dataset):
             start_index = index
             end_index = index + self.seq_len ## Predictor length: index - index + seq_len -1, Label: end_index -- end_index + label_len - 1
             ## last target index  goes from self.__len__() - self.label_len to self.__len__() - 1
-            return self.dataset[start_index:end_index,:], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
+            if self.split_endog is None:
+                return [self.dataset[start_index:end_index,:]], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
+            else:
+                return [self.dataset[start_index:end_index, x] for x in self.split_endog], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
         else:
             ## last target index goes from self.__len__() - self.label_len - 1 to self.__len__() - 1
-            return self.dataset[:index,:], self.dataset[index:(index+self.label_len),self.target_cols], torch.arange(index, index+self.label_len)
+            ## predictor, label, target index
+            return [self.dataset[:index,:]], self.dataset[index:(index+self.label_len),self.target_cols], torch.arange(index, index+self.label_len)
 
+class TimeSeriesDataCollection(Dataset):
+    """
+    Time series Data Collection that is loaded into memory. All operations involving time series data preserves ordering.
+    """
+    def __init__(self, endogs: List[pd.DataFrame], exogs: List[Optional[pd.DataFrame]], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None):
+        """
+        Initializer for Time Series Dataset. The row of data is the time dimension. Assuming time in ascending order(past -> future).
+
+        Intialize time series data.
+
+        :param endog: A list of endogenous variables. The row of data is the time dimension.
+        :param exogs: A list of exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
+        :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used.
+        :param label_len: The length of label. The length of the label (number of steps to predict ahead).
+        :param name: The convenient name for the dataset.
+        """
+        assert len(endogs) == len(exogs)
+        assert all([endog.shape[0] == exog.shape[0] if exog is not None else True for endog, exog in zip(endogs, exogs)])
+
+        self.datasets = [TimeSeriesData(endog, exog, seq_len, label_len, None) for endog, exog in zip(endogs, exogs)]
+
+        self.info = {
+            'endog': concat_list([x.info['endog'] for x in self.datasets], sep='|'),
+            'exog': concat_list([x.info['exog'] for x in self.datasets], sep='|'),
+            'seq_len': seq_len,
+            'label_len': label_len,
+            'name': name,
+            'n_series': len(self.datasets),
+            'n_obs': sum(len(x) for x in self.datasets),
+            'create_time': pd.Timestamp.now()
+        }
+
+    def __len__(self):
+        return self.info['n_obs']
+
+    def __getitem__(self, index):
+        pass
+        #indices_end = np.cumsum([len(x) for x in self.datasets])
+        #dataset_index = np.where(indices_end > index)[0][0]
+        #return self.datasets[dataset_index][index-indices_end[dataset_index-1] if dataset_index > 0 else index]
 
 class ModelPerformance:
     """

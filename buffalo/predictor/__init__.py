@@ -40,9 +40,9 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
         optimizer.zero_grad()
 
         data, label, index = batch
-        data = data.to(model.device)
+        data = [x.to(model.device) for x in data]
         label = label.to(model.device)
-        pred = model(data) ## Shape: (batch_size, n_ahead, n_endog)
+        pred = model(*data) ## Shape: (batch_size, n_ahead, n_endog), could be multiple tensors
 
         loss = loss_func(pred, label)
         resid = label - pred
