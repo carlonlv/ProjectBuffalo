@@ -918,6 +918,11 @@ class IterativeTtestOutlierDetectionResult:
         self.fit_args = fit_args
         self.located_ol = located_ol
 
+        regressor = self.ol_detection.outlier_effect_on_responses(self.endog, located_ol=self.located_ol, use_fitted_coefs=True)
+
+        self.ol_effect = pd.Series(regressor.sum(axis=1).to_numpy(), index=self.endog.index, name='ol_effect')
+        self.adjusted_endog = self.endog - self.ol_effect
+
     def serialize_to_file(self, sql_path: str, dataset_name:str='', algo_name:str=''):
         """ Serialize the results to a file.
 
@@ -993,6 +998,8 @@ class IterativeTtestOutlierDetectionResult:
                 pd.concat((pd.read_sql_query('SELECT * FROM ol_fit_info', newconn), pd.DataFrame(fit_info, index=[0])), axis=0, ignore_index=True).to_sql('fit_info', newconn, index=False, if_exists='replace')
             with open(f'{os.path.dirname(sql_path)}/ol_detection_{searched_id}.pickle', 'wb') as fil:
                 pickle.dump(self.ol_detection.ts_model, fil)
+            self.ol_effect.to_sql(f'ol_effect_{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.adjusted_endog.to_sql(f'ol_adjusted_endog_{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
             self.located_ol.assign(fit_id=searched_id).to_sql('located_ol', newconn, index=False, if_exists='append')
         else:
             warn(f'fit_info with the same primary keys already exists with id {searched_id}, will not store model information.')

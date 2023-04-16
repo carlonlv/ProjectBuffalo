@@ -61,31 +61,33 @@ class PositiveFloat(float):
         return super().__new__(cls, value)
 
 
-def do_call(func: Callable, **kwargs):
+def do_call(func: Callable, *args, **kwargs):
     """
     Call function, ignore nonexited arguments and keywords with None values.
 
     :param func: Function to be executed.
+    :param *args: Additional positional arguments to be passed into func.
     :param **kwargs: Additional keyword arguments to be passed into func.
     :return: Returned results from func.
     """
     sig = inspect.signature(func)
-    filtered_dict = {filter_item[0] : filter_item[1] for filter_item in kwargs.items() if filter_item[0] in sig.parameters.keys() and filter_item[1] is not None}
-    return func(**filtered_dict)
+    filtered_dict = {filter_item[0] : filter_item[1] for filter_item in kwargs.items() if filter_item[0] in list(sig.parameters.keys())[len(args):] and filter_item[1] is not None}
+    return func(*args, **filtered_dict)
 
-def do_call_for_each_group(data: pd.DataFrame, func: Callable, grouping: Optional[Union[List, str]]=None, **kwargs):
+def do_call_for_each_group(data: pd.DataFrame, func: Callable, grouping: Optional[Union[List, str]], **kwargs):
     """
     Call function for each group.
 
     :param data: The input dataframe.
     :param func: Function to be executed.
     :param grouping: The grouping used before applying the function.
+    :param *args: Additional positional arguments to be passed into func.
     :param **kwargs: Additional keyword arguments to be passed into func.
     """
     if len(grouping) == 0:
         return func(data, **kwargs)
     else:
-        return data.groupby(grouping).apply(partial(do_call, func, **kwargs)).reset_index()
+        return data.groupby(grouping).apply(lambda x: do_call(func, x, **kwargs)).reset_index()
 
 def concat_list(lst: List[Any], sep=","):
     """

@@ -4,7 +4,7 @@ This module contains helper functions to manipulate predictors.
 
 import os
 import sqlite3
-from typing import Optional
+from typing import List, Optional
 from warnings import warn
 
 import ipywidgets as widgets
@@ -87,6 +87,8 @@ def align_dataframe_by_time(target_df: pd.DataFrame,
     :param max_period: Maximum period allowed. This parameter is used when determining expiry time of the last observation for other_df.
     :return: The concatenated dataframe by rows.
     """
+    other_df = other_df.sort_index()
+    target_df = target_df.sort_index()
     assert isinstance(target_df.index, pd.DatetimeIndex) and isinstance(other_df.index, pd.DatetimeIndex)
     expire_time = predict_next_timestamps(other_df.index, max_period=max_period)
     if other_df.index.tz is None:
