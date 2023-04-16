@@ -248,6 +248,8 @@ def search_id_given_pk(conn, table_name, pks, id_col):
             return 0
         if isinstance(pk_value, str) or isinstance(pk_value, pd.Timestamp):
             query += f" [{pk_name}] = '{pk_value}' AND"
+        elif pk_value is None or np.isnan(pk_value):
+            query += f" [{pk_name}] IS NULL AND"
         else:
             query += f" [{pk_name}] = {pk_value} AND"
     if len(pks) > 0:

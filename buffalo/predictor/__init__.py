@@ -111,6 +111,7 @@ def train_and_evaluate_model(model: nn.Module,
         init_state_dict = deepcopy(model.state_dict())
         train_record = []
         train_valid_loss = []
+        train_losses = []
         for fold, (train_indice, valid_indice) in tqdm(enumerate(indices), desc='Multi-fold validation', position=0, leave=True, total=len(indices)):
             model.load_state_dict(init_state_dict) ## Reset the model parameters
             epochs = (fold + 1) * epochs_per_fold
@@ -145,6 +146,7 @@ def train_and_evaluate_model(model: nn.Module,
                 pbar.set_postfix(curr_record.to_dict())
 
             train_valid_loss.append(curr_record['validation_loss'])
+            train_losses.append(curr_record['training_loss'])
 
         train_record = pd.concat([x.to_frame().T for x in train_record], ignore_index=True)
         train_stop_time = timeit.default_timer()
@@ -170,6 +172,8 @@ def train_and_evaluate_model(model: nn.Module,
                      'train_stop_time': train_stop_time if train_size > 0 else None,
                      'train_elapsed_time': train_stop_time - train_start_time if train_size > 0 else None,
                      'train_n_fold': n_fold if train_size > 0 else None,
+                     'average_train_loss': np.nanmean(train_losses) if train_size > 0 else None,
+                     'last_train_loss': train_losses[-1] if train_size > 0 else None,
                      'average_validation_loss': np.nanmean(train_valid_loss) if train_size > 0 else None}
     testing_info = {'test_start': len(dataset)-test_size if test_size > 0 else None,
                     'test_end': len(dataset) if test_size > 0 else None,

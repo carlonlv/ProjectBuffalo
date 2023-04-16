@@ -315,12 +315,14 @@ class ModelPerformance:
         plt.subplots_adjust(hspace=0.5)
         plt.show()
 
-    def plot_residuals(self):
+    def plot_residuals(self, figsize=(12, 8)):
         """ Plot original time series and residual time series, used to check the performance of the model. Vertical line in the residual plot indicates the start of the testing period.
+
+        :param figsize: The size of the figure.
         """
 
         endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
-        plt.subplots(figsize=(12, 8))
+        plt.subplots(figsize=figsize)
         plt.subplot(3, 1, 1)
         plt1 = sns.lineplot(data=endog_long, x='time', y='price')
         plt1.set_title('Original Time Series', fontsize=12)
@@ -562,8 +564,10 @@ class ModelPerformanceOnline:
         plt.subplots_adjust(hspace=0.5)
         plt.show()
 
-    def plot_residuals(self):
+    def plot_residuals(self, fig_size=(12, 8)):
         """ Plot original time series and residual time series, used to check the performance of the model. Vertical line in the residual plot indicates the start of the testing period.
+
+        :param fig_size: tuple, the size of the figure.
         """
         def helper(time_step):
             curr_update_time = time_step
@@ -572,7 +576,7 @@ class ModelPerformanceOnline:
                 next_update_time = self.update_rule.test_residuals['t_index'].max()
             endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
 
-            fig, axes = plt.subplots(3, 1, figsize=(12, 8))
+            _, axes = plt.subplots(3, 1, figsize=fig_size)
             sns.lineplot(ax = axes[0], data=endog_long, x='time', y='price')
             axes[0].set_title('Original Time Series', fontsize=12)
             axes[0].set_xlabel('Time', fontsize=10)
