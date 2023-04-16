@@ -182,9 +182,9 @@ class LSTM(nn.Module):
         output_v, (hidden_v, cell_v) = self.model(input_v, h_0)
         output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
         hidden_v = hidden_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]  # Select last layer hidden state
-        hidden_v = hidden_v.reshape(batch_num, self.n_ahead, -1)
+        hidden_v = hidden_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
         cell_v = cell_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]
-        cell_v = cell_v.reshape(batch_num, self.n_ahead, -1)
+        cell_v = cell_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
         output_v = torch.cat((output_v, hidden_v, cell_v), dim=-1)
         return self.f_c(output_v)
 

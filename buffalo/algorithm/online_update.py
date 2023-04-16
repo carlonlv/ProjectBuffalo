@@ -90,8 +90,8 @@ class OnlineUpdateRule(ABC):
         :param test_loss: The testing loss.
         :param test_resid: The testing residuals.
         """
-        self.test_logs = pd.concat((self.test_logs, pd.DataFrame({'test_loss': test_loss}, index=[t_index])), axis=0)
-        self.test_residuals = pd.concat((self.test_residuals, test_resid.assign(t_index=t_index)), ignore_index=True, axis=0)
+        self.test_logs = pd.concat((self.test_logs, pd.DataFrame({'test_loss': test_loss}, index=[t_index+1])), axis=0)
+        self.test_residuals = pd.concat((self.test_residuals, test_resid.assign(t_index=t_index+1)), ignore_index=True, axis=0)
 
     @abstractmethod
     def get_train_settings(self, t_index: NonnegativeInt) -> Tuple[list, PositiveInt, PositiveFlt]:

@@ -239,7 +239,7 @@ def train_and_evaluate_model_online(model: nn.Module,
             update_rule.collect_train_stats(t_index, train_loss, train_resid, pd.concat(train_records, axis=0))
 
         test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+dataset.label_len+1)), batch_size=1)
-        test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
+        test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols) ## We simulate to observe one step at a time and predict one step at a time
         update_rule.collect_test_stats(t_index, test_loss, test_resid)
     stop_time = timeit.default_timer()
 
