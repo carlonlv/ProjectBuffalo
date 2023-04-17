@@ -112,26 +112,28 @@ class TimeSeriesData(Dataset):
     """
     Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None, split_endog: Optional[List[List[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
+    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, n_ahead: PositiveInt=1, name: Optional[str]=None, split_endog: Optional[List[List[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
         """
         Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
-        Intialize time series data.
+        Detailed behaviors of seq_len, label_len, n_ahead: If seq_len and label_len are not None, then the sequence of predictors and labels are offsetted by n_ahead. The overlapping indices are determined by seq_len and label_len. If seq_len is not provided, then all observations from index 0 to the selected index is used. If label_len is not provided, labels returned will have the same length as predictors.
 
         :param endog: The endogenous variable. The row of data is the time dimension.
         :param exog: The exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
         :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used.
-        :param label_len: The length of label. The length of the label (number of steps to predict ahead).
+        :param label_len: The length of label. The length of the label to be returned.
+        :param n_ahead: The number of steps to predict ahead. The number of steps to predict ahead.
         :param name: The convenient name for the dataset.
-        :param split_endog: Used to control the splitting of endog dataset. If not provided, the data will not be splitted. Otherwise, endog will be splitted into multiple tensors of equal length during sampling. This is useful when model is Autoencoder/decoder and endog should be splitted into input sequence and target sequence. Note that the order of the tuples in this list should correspond to the positional arguments of the model.
+        :param split_endog: Used to control the splitting of endog dataset. If not provided, the data will not be splitted. Otherwise, endog will be splitted into multiple tensors of equal length during sampling. This is useful when model is Autoencoder/decoder and endog should be splitted into input sequence and target input sequence. Note that the order of the tuples in this list should correspond to the positional arguments of the model.
         :param target_indices: The indices of the target columns. If not provided, all columns of endog will be used.
         """
         assert target_indices is None or all(np.array(target_indices) < endog.shape[1])
-        assert split_endog is None or reduce(lambda x, y: set(x).union(set(y)), split_endog) == set(range(endog.shape[1]))
+        assert split_endog is None or reduce(lambda x, y: set(x).union(set(y)), split_endog) == set(range(endog.shape[1])) if target_indices is None else set(target_indices), 'split_endog does not cover all indices in target_indices'
 
         self.endog = endog.sort_index(ascending=True)
         self.seq_len = seq_len
         self.label_len = label_len
+        self.n_ahead = n_ahead
         self.target_cols = torch.arange(self.endog.shape[1]) if target_indices is None else torch.tensor(target_indices)
         self.name = name
         self.split_endog = None if split_endog is None else [torch.tensor(x) for x in split_endog]
@@ -150,6 +152,7 @@ class TimeSeriesData(Dataset):
                      'exog': concat_list(self.exog.columns) if self.exog is not None else '',
                      'label_len': label_len,
                      'seq_len': seq_len,
+                     'n_ahead': n_ahead,
                      'name': name,
                      'split_endog': split_endog,
                      'target_indices': target_indices,
@@ -160,24 +163,31 @@ class TimeSeriesData(Dataset):
 
     def __len__(self):
         if self.seq_len is None:
-            return len(self.dataset) - self.label_len
+            return len(self.dataset) - self.n_ahead
         else:
-            return len(self.dataset) - self.seq_len - self.label_len
+            return len(self.dataset) - self.seq_len - self.n_ahead
 
     def __getitem__(self, index):
         ## index goes from 0 to self.__len__() - self.seq_len - self.label_len
         if self.seq_len is not None:
-            start_index = index
-            end_index = index + self.seq_len ## Predictor length: index - index + seq_len -1, Label: end_index -- end_index + label_len - 1
-            ## last target index  goes from self.__len__() - self.label_len to self.__len__() - 1
-            if self.split_endog is None:
-                return [self.dataset[start_index:end_index,:]], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
-            else:
-                return [self.dataset[start_index:end_index, x] for x in self.split_endog], self.dataset[end_index:(end_index+self.label_len),self.target_cols], torch.arange(end_index, end_index+self.label_len)
+            start_index_predictor = index
+            end_index_predictor = index + self.seq_len ## Not included
         else:
-            ## last target index goes from self.__len__() - self.label_len - 1 to self.__len__() - 1
-            ## predictor, label, target index
-            return [self.dataset[:index,:]], self.dataset[index:(index+self.label_len),self.target_cols], torch.arange(index, index+self.label_len)
+            start_index_predictor = 0
+            end_index_predictor = index
+
+        if self.label_len is not None:
+            end_index_label = end_index_predictor + self.n_ahead
+            start_index_label = end_index_label - self.label_len
+        else:
+            end_index_label = end_index_predictor + self.n_ahead
+            start_index_label = end_index_label - (end_index_predictor - start_index_predictor) ## By default match the same length as predictor
+
+        if self.split_endog is None:
+            return [self.dataset[start_index_predictor:end_index_predictor,:]], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label)
+        else:
+            return [self.dataset[start_index_predictor:end_index_predictor, x] for x in self.split_endog], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label)
+
 
 class TimeSeriesDataCollection(Dataset):
     """
@@ -215,10 +225,9 @@ class TimeSeriesDataCollection(Dataset):
         return self.info['n_obs']
 
     def __getitem__(self, index):
-        pass
-        #indices_end = np.cumsum([len(x) for x in self.datasets])
-        #dataset_index = np.where(indices_end > index)[0][0]
-        #return self.datasets[dataset_index][index-indices_end[dataset_index-1] if dataset_index > 0 else index]
+        indices_end = np.cumsum([len(x) for x in self.datasets])
+        dataset_index = np.where(indices_end > index)[0][0]            
+        return self.datasets[dataset_index][(index-indices_end[dataset_index-1]) if dataset_index > 0 else index]
 
 class ModelPerformance:
     """
