@@ -405,7 +405,7 @@ class ModelPerformance:
         id_col = 'training_id'
         self.training_info['dataset_id'] = self.dataset.info['dataset_id']
         self.training_info['model_id'] = self.model.info['model_id']
-        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.training_info).drop(['train_start_time', 'train_stop_time', 'train_elapsed_time']).to_dict(), id_col)
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.training_info).drop(['average_train_loss', 'last_train_loss', 'average_validation_loss', 'train_start_time', 'train_stop_time', 'train_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.training_info[id_col] = searched_id
@@ -421,7 +421,7 @@ class ModelPerformance:
         table_name = 'testing_info'
         id_col = 'testing_id'
         self.testing_info['training_id'] = self.training_info['training_id']
-        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.testing_info).drop(['test_start_time', 'test_stop_time', 'test_elapsed_time']).to_dict(), id_col)
+        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.testing_info).drop(['test_loss', 'test_start_time', 'test_stop_time', 'test_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.testing_info[id_col] = searched_id
@@ -633,7 +633,7 @@ class ModelPerformanceOnline:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.info[id_col] = searched_id
             pd.DataFrame(self.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            torch.save(self.model, f'{os.path.dirname(sql_path)}/model-sim_id-{searched_id}.pt')
+            torch.save(self.model, f'{os.path.dirname(sql_path)}/onlinemodel-sim_id-{searched_id}.pt')
             self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=False, if_exists='replace')
             self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
             self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
