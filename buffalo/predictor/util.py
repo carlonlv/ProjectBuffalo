@@ -5,7 +5,7 @@ This module contains helper functions to manipulate predictors.
 import os
 import sqlite3
 from functools import reduce
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from warnings import warn
 
 import ipywidgets as widgets
@@ -112,7 +112,7 @@ class TimeSeriesData(Dataset):
     """
     Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None, split_endog: Optional[List[Tuple[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
+    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, name: Optional[str]=None, split_endog: Optional[List[List[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
         """
         Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
@@ -127,7 +127,7 @@ class TimeSeriesData(Dataset):
         :param target_indices: The indices of the target columns. If not provided, all columns of endog will be used.
         """
         assert target_indices is None or all(np.array(target_indices) < endog.shape[1])
-        assert split_endog is None or reduce(lambda x, y: x + y, split_endog) == set(range(endog.shape[1]))
+        assert split_endog is None or reduce(lambda x, y: set(x).union(set(y)), split_endog) == set(range(endog.shape[1]))
 
         self.endog = endog.sort_index(ascending=True)
         self.seq_len = seq_len
@@ -144,6 +144,7 @@ class TimeSeriesData(Dataset):
             exog_array = torch.Tensor(self.exog.to_numpy())
             self.dataset = torch.cat((endog_array, exog_array), dim=1)
         else:
+            self.exog = None
             self.dataset = endog_array
         self.info = {'endog': concat_list(self.endog.columns),
                      'exog': concat_list(self.exog.columns) if self.exog is not None else '',

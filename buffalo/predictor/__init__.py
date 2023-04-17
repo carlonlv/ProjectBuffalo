@@ -57,8 +57,8 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
         if loss_func.reduction == 'sum':
             loss_sum += loss.item()
         else:
-            loss_sum += loss.item() * data.size(0)
-        total_samples += data.size(0)
+            loss_sum += loss.item() * index.size(0)
+        total_samples += index.size(0)
 
     return loss_sum / total_samples, curr_resid
 

@@ -1049,13 +1049,10 @@ class IterativeTtestOutlierDetectionResult:
         residuals = pd.Series(self.ol_detection.get_resid(), index=original_endog.index)
         residuals.name = 'residuals'
 
-        regressor = self.ol_detection.outlier_effect_on_responses(original_endog, located_ol=self.located_ol, use_fitted_coefs=True)
-        ol_effect = pd.Series(regressor.sum(axis=1).to_numpy(), index=original_endog.index, name='ol_effect')
+        arima_effect = (original_endog - self.ol_effect - residuals).rename('arima_effect')
 
-        arima_effect = (original_endog - ol_effect - residuals).rename('arima_effect')
-
-        decomposition = pd.concat((original_endog, residuals, arima_effect, ol_effect), axis=1)
-        decomposition = decomposition.reset_index().melt(id_vars='index', var_name='series', value_name='value')
+        decomposition = pd.concat((original_endog, residuals, arima_effect, self.ol_effect), axis=1)
+        decomposition = decomposition.reset_index(names='index').melt(id_vars='index', var_name='series', value_name='value')
         plt1 = sns.lineplot(x='index', y='value', hue='series', data=decomposition)
         plt1.set_title('Original Series Decomposition')
         plt1.set_xlabel('index')
