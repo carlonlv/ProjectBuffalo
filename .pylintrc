@@ -430,7 +430,8 @@ disable=raw-checker-failed,
         use-symbolic-message-instead,
         not-callable,
         no-member,
-        abstract-class-instantiated
+        abstract-class-instantiated,
+        eval-used
 
 # Enable the message, report, category or checker with the given id(s). You can
 # either give multiple identifier separated by comma (,) or put this option
