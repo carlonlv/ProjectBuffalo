@@ -175,6 +175,7 @@ def train_and_evaluate_model(model: nn.Module,
                      'average_train_loss': np.nanmean(train_losses) if train_size > 0 else None,
                      'last_train_loss': train_losses[-1] if train_size > 0 else None,
                      'average_validation_loss': np.nanmean(train_valid_loss) if train_size > 0 else None}
+    training_info.update(dataloader_args)
     testing_info = {'test_start': len(dataset)-test_size if test_size > 0 else None,
                     'test_end': len(dataset) if test_size > 0 else None,
                     'test_loss_func': str(loss_func),
