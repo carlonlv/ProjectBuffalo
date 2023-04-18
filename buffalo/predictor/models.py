@@ -8,7 +8,7 @@ from typing import Any, Callable, Literal, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 
-from ..utility import NonnegativeInt, PositiveFlt, PositiveInt, Prob
+from ..utility import PositiveFlt, PositiveInt, Prob
 
 
 class RNN(nn.Module):
@@ -173,7 +173,7 @@ class LSTM(nn.Module):
         input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
         input_v = input_v.reshape(batch_num, -1, self.input_size)
         output_v, (_, _) = self.model(input_v, h_0)
-        output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
+        output_v = output_v[:, -self.n_ahead:, :self.output_size]  # Select last output of each sequence and forward direction.
         return output_v
 
 
