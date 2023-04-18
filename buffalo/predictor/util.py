@@ -253,7 +253,7 @@ class TimeSeriesData(Dataset):
             n_ahead=dataset_info['n_ahead'],
             name=dataset_info['name'],
             split_endog=eval(dataset_info['split_endog']) if not pd.isna(dataset_info['split_endog']) else None,
-            target_indices=eval(dataset_info['target_indices']) if not pd.isna(dataset_info['target_cols']) else None)
+            target_indices=eval(dataset_info['target_indices']) if not pd.isna(dataset_info['target_indices']) else None)
         dataset.info = dataset_info
         if conn is None:
             newconn.close()
@@ -431,7 +431,7 @@ class ModelPerformance:
         endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
         plt.subplots(figsize=figsize)
         plt.subplot(3, 1, 1)
-        plt1 = sns.lineplot(data=endog_long, x='time', y='price')
+        plt1 = sns.lineplot(data=endog_long, x='time', y='price', hue='series', errorbar=None)
         plt1.set_title('Original Time Series', fontsize=12)
         plt1.set_xlabel('Time', fontsize=10)
         plt1.set_ylabel('Price', fontsize=10)
@@ -447,7 +447,7 @@ class ModelPerformance:
         test_predicted = pd.DataFrame(test_predicted, index = self.testing_residuals.index)
         predicted_long = pd.concat((train_predicted, test_predicted), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
         predicted_long['time'] = endog_long['time'].iloc[predicted_long['time']].values
-        plt2 = sns.lineplot(data=predicted_long, x='time', y='price')
+        plt2 = sns.lineplot(data=predicted_long, x='time', y='price', hue='series', errorbar=None)
         plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black')
         plt2.set_title('Predicted Time Series', fontsize=12)
         plt2.set_xlabel('Time', fontsize=10)
@@ -456,7 +456,7 @@ class ModelPerformance:
         plt.subplot(3, 1, 3)
         residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
         residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
-        plt3 = sns.lineplot(data=residual_long, x='time', y='price')
+        plt3 = sns.lineplot(data=residual_long, x='time', y='price', hue='series', errorbar=None)
         plt3.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black')
         plt3.set_title('Residual Time Series', fontsize=12)
         plt3.set_xlabel('Time', fontsize=10)
@@ -686,7 +686,7 @@ class ModelPerformanceOnline:
         plt.subplots_adjust(hspace=0.5)
         plt.show()
 
-    def plot_residuals(self, fig_size=(12, 8)):
+    def plot_residuals(self, figsize=(12, 8)):
         """ Plot original time series and residual time series, used to check the performance of the model. Vertical line in the residual plot indicates the start of the testing period.
 
         :param fig_size: tuple, the size of the figure.
@@ -698,7 +698,7 @@ class ModelPerformanceOnline:
                 next_update_time = self.update_rule.test_residuals['t_index'].max()
             endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
 
-            _, axes = plt.subplots(3, 1, figsize=fig_size)
+            _, axes = plt.subplots(3, 1, figsize=figsize)
             sns.lineplot(ax = axes[0], data=endog_long, x='time', y='price')
             axes[0].set_title('Original Time Series', fontsize=12)
             axes[0].set_xlabel('Time', fontsize=10)
