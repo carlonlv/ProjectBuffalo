@@ -155,8 +155,8 @@ class LSTM(nn.Module):
                      'dropout': dropout,
                      'bidirectional': bidirectional,
                      'str_rep': str(self),
-                     'param_count': batchnorm_param_count + lstm_param_count + fc_param_count,
-                     'connection_count': batchnorm_connection_count + lstm_connection_count + fc_connection_count}
+                     'param_count': batchnorm_param_count + lstm_param_count,
+                     'connection_count': batchnorm_connection_count + lstm_connection_count}
 
     def forward(self, input_v: torch.Tensor, h_0: Optional[torch.Tensor]=None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
