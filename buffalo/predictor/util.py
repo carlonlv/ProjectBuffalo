@@ -112,7 +112,15 @@ class TimeSeriesData(Dataset):
     """
     Time series Data that is loaded into memory. All operations involving time series data preserves ordering.
     """
-    def __init__(self, endog: pd.DataFrame, exog: Optional[pd.DataFrame], seq_len: Optional[PositiveInt], label_len: PositiveInt=1, n_ahead: int=1, name: Optional[str]=None, split_endog: Optional[List[List[NonnegativeInt]]]=None, target_indices: Optional[List[NonnegativeInt]]=None):
+    def __init__(self,
+                 endog: pd.DataFrame,
+                 exog: Optional[pd.DataFrame],
+                 seq_len: Optional[PositiveInt],
+                 label_len: PositiveInt=1,
+                 n_ahead: int=1,
+                 name: Optional[str]=None,
+                 split_endog: Optional[List[List[NonnegativeInt]]]=None,
+                 target_indices: Optional[List[NonnegativeInt]]=None):
         """
         Initializer for Time Series Data. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
@@ -122,10 +130,10 @@ class TimeSeriesData(Dataset):
         :param exog: The exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
         :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used.
         :param label_len: The length of label. The length of the label to be returned.
-        :param n_ahead: The number of steps to predict ahead. The number of steps to predict ahead, can be negative to use future information as predictors.
+        :param n_ahead: The number of observations between the end of the predictor sequence and the end of the label sequence. Default is 1, i.e., the end of sequences are offsetted by 1.
         :param name: The convenient name for the dataset.
         :param split_endog: Used to control the splitting of endog dataset. If not provided, the data will not be splitted. Otherwise, endog will be splitted into multiple tensors of equal length during sampling. This is useful when model is Autoencoder/decoder and endog should be splitted into input sequence and target input sequence. Note that the order of the tuples in this list should correspond to the positional arguments of the model.
-        :param target_indices: The indices of the target columns. If not provided, all columns of endog will be used.
+        :param target_indices: The indices of the target columns used to compute loss. If not provided, all columns of endog will be used.
         """
         assert target_indices is None or all(np.array(target_indices) < endog.shape[1])
         assert split_endog is None or reduce(lambda x, y: set(x).union(set(y)), split_endog) == set(range(endog.shape[1])) if target_indices is None else set(target_indices), 'split_endog does not cover all indices in target_indices'
@@ -162,10 +170,9 @@ class TimeSeriesData(Dataset):
                      'create_time': pd.Timestamp.now()}
 
     def __len__(self):
-        if self.seq_len is None:
-            return len(self.dataset) - self.n_ahead
-        else:
-            return len(self.dataset) - self.seq_len - self.n_ahead
+        seq_res = self.seq_len if self.seq_len is not None else 0
+        label_res = self.label_len if self.label_len is not None else 0
+        return len(self.dataset) - max(seq_res, label_res) - self.n_ahead
 
     def __getitem__(self, index):
         ## index goes from 0 to self.__len__() - self.seq_len - self.label_len

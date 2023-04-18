@@ -34,7 +34,7 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
     """
     loss_sum = 0
     total_samples = 0
-    col_name = [f'{x}:{y}' for x, y in product(residual_cols, range(1, 1+model.n_ahead))]
+    col_name = [f'{y}:{x}' for x, y in product(range(1, 1+model.n_ahead), residual_cols)]
     curr_resid = pd.DataFrame(columns=col_name) ## Initalize the residuals to be nan
     for batch in data_loader:
         optimizer.zero_grad()

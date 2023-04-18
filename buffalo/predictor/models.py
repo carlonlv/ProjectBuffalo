@@ -55,7 +55,7 @@ class RNN(nn.Module):
         self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
         self.model = nn.RNN(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, nonlinearity=nonlinearity, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional).to(self.device)
-        self.f_c = nn.Linear(in_features=hidden_size*(2 if not bidirectional else 4), out_features=output_size).to(self.device)
+        self.f_c = nn.Linear(in_features=hidden_size*(1 if not bidirectional else 2), out_features=output_size).to(self.device)
         self.f_c = nn.Sequential(self.f_c, nn.Softmax(dim=-1)) if softmax_ouput else self.f_c
         batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
         batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
@@ -92,11 +92,8 @@ class RNN(nn.Module):
         input_v = input_v.reshape(-1, self.input_size)
         input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
         input_v = input_v.reshape(batch_num, -1, self.input_size)
-        output_v, hidden_v = self.model(input_v, h_0)
+        output_v, _ = self.model(input_v, h_0)
         output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]  # Select last layer hidden state
-        hidden_v = hidden_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
-        output_v = torch.cat((output_v, hidden_v), dim=-1)
         return self.f_c(output_v)
 
 
@@ -115,7 +112,6 @@ class LSTM(nn.Module):
                  bias: bool=True,
                  dropout: Prob=0,
                  bidirectional: bool=False,
-                 proj_size: NonnegativeInt=0,
                  use_gpu: bool=True) -> None:
         """
         Initializer and configuration for RNN Autoencoder.
@@ -142,9 +138,8 @@ class LSTM(nn.Module):
         self.n_ahead = n_ahead
         self.bidirectional = bidirectional
         self.batch_norm = nn.BatchNorm1d(num_features=input_size).to(self.device)
-        self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=proj_size).to(self.device)
-        self.f_c = nn.Linear(in_features=(hidden_size+2*(proj_size if proj_size > 0 else hidden_size))*(2 if bidirectional else 1), out_features=output_size).to(self.device)
-        self.f_c = nn.Sequential(self.f_c, nn.Softmax(dim=-1)) if softmax_ouput else self.f_c
+        self.model = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=num_layers, bias=bias, batch_first=True, dropout=dropout, bidirectional=bidirectional, proj_size=output_size).to(self.device)
+        self.model = nn.Sequential(self.batch_norm, nn.Softmax(dim=-1)) if softmax_ouput else self.model
         batchnorm_param_count = sum(p.numel() for p in self.batch_norm.parameters() if p.requires_grad)
         batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
         lstm_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
@@ -179,19 +174,13 @@ class LSTM(nn.Module):
         input_v = input_v.reshape(-1, self.input_size)
         input_v = self.batch_norm(input_v) ## Per series batch normalization, across all samples in batch and all time steps
         input_v = input_v.reshape(batch_num, -1, self.input_size)
-        output_v, (hidden_v, cell_v) = self.model(input_v, h_0)
+        output_v, (_, _) = self.model(input_v, h_0)
         output_v = output_v[:, -self.n_ahead:, :]  # Select last output of each sequence
-        hidden_v = hidden_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]  # Select last layer hidden state
-        hidden_v = hidden_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
-        cell_v = cell_v[-(self.n_ahead if not self.bidirectional else 2*self.n_ahead):]
-        cell_v = cell_v.permute(1, 0, 2).reshape(batch_num, self.n_ahead, -1)
-        output_v = torch.cat((output_v, hidden_v, cell_v), dim=-1)
-        return self.f_c(output_v)
+        return output_v
 
 
 class Transformer(nn.Module):
     """ Transformer class to model outlier probability.
-
     """
 
     def __init__(self,
@@ -212,7 +201,7 @@ class Transformer(nn.Module):
                  norm_first: bool=False,
                  use_gpu: bool=True) -> None:
         """
-        Initializer for the Transformer class.
+        Initializer for the Transformer class. To use transformer or other custom encoder/decoder, one should configure TimeSeriesData class with target sequence and source sequence as endogenous series, other features will be treated as exogenous series. split_endog must be used to split endogenous series into target sequence and source sequence. target_indices should be set to correspond the indices of target sequence. Also label_len should be configured to be the same as seq_len.
 
         :param d_model: the number of expected features in the encoder/decoder inputs (default=512), embedding size.
         :param output_dimension: the number of expected features in the final inputs, embedding size.
