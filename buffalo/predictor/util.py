@@ -3,10 +3,9 @@ This module contains helper functions to manipulate predictors.
 """
 
 import os
-import re
 import sqlite3
 from functools import reduce
-from typing import List, Optional, Union
+from typing import List, Optional
 from warnings import warn
 
 import ipywidgets as widgets
@@ -254,86 +253,6 @@ class TimeSeriesData(Dataset):
         return dataset
 
 
-class TimeSeriesDataCollection(Dataset):
-    """
-    Time series Data Collection that is loaded into memory. All operations involving time series data preserves ordering.
-    """
-    def __init__(self,
-                 endogs: List[pd.DataFrame],
-                 exogs: List[Optional[pd.DataFrame]],
-                 seq_len: Optional[PositiveInt]=None,
-                 label_len: PositiveInt=1,
-                 n_ahead: PositiveInt=1,
-                 name: Optional[str]=None,
-                 split_endog: Optional[List[List[int]]]=None,
-                 target_indices: Optional[List[int]]=None,
-                 timeseries_datasets: Optional[List[TimeSeriesData]]=None):
-        """
-        Initializer for Time Series Dataset. The row of data is the time dimension. Assuming time in ascending order(past -> future).
-
-        Intialize time series data.
-
-        :param endog: A list of endogenous variables. The row of data is the time dimension.
-        :param exogs: A list of exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
-        :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used. Passed into constructor of TimeSeriesData.
-        :param label_len: The length of label. The length of the label (number of steps to predict ahead). If not provided, the label is the same length as the predictor. Passed into constructor of TimeSeriesData.
-        :param n_ahead: The number of steps to predict ahead. Passed into constructor of TimeSeriesData.
-        :param name: The convenient name for the dataset.
-        :param split_endog: A list of list of indices. Each list of indices is a list of columns to be used as endogenous variables. If not provided, all columns are used as endogenous variables. Passed into constructor of TimeSeriesData.
-        :param target_indices: A list of indices of the target columns. If not provided, the last column is used as the target column. Passed into constructor of TimeSeriesData.
-        :param timeseries_datasets: A list of TimeSeriesData objects. If provided, the other parameters will be ignored.
-        """
-        if timeseries_datasets is not None:
-            self.datasets = timeseries_datasets
-        else:
-            assert len(endogs) == len(exogs)
-            assert all([endog.shape[0] == exog.shape[0] if exog is not None else True for endog, exog in zip(endogs, exogs)])
-
-            self.datasets = [TimeSeriesData(endog, exog, seq_len, label_len, n_ahead, name, split_endog, target_indices) for endog, exog in zip(endogs, exogs)]
-
-    def __len__(self):
-        return sum([len(x) for x in self.datasets])
-
-    def __getitem__(self, index):
-        indices_end = np.cumsum([len(x) for x in self.datasets])
-        dataset_index = np.where(indices_end > index)[0][0]
-        return self.datasets[dataset_index][(index-indices_end[dataset_index-1]) if dataset_index > 0 else index]
-
-    def serialize_to_file(self, sql_path: str, additional_note: str='', conn: Optional[sqlite3.Connection]=None) -> List[NonnegativeInt]:
-        """ Write the performance of the model to a csv file and the trained model to file.
-
-        Primary keys for dataset is dataset_id, primary keys for model is model_id, dataset_id, train_start, train_end.
-        :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
-        :param additional_note: Additional notes to be added to describe the dataset.
-        :param conn: The connection to the sqlite file. If not provided, a new connection will be created.
-        """
-        if conn is None:
-            newconn = sqlite3.connect(sql_path)
-        else:
-            newconn = conn
-
-        dataset_ids = []
-        for dataset in self.datasets:
-            dataset_ids.append(dataset.serialize_to_file(sql_path, additional_note, newconn))
-
-        if conn is None:
-            newconn.close()
-        return dataset_ids
-
-    @classmethod
-    def deserialize_from_file(cls, sql_path: str, dataset_ids: List[NonnegativeInt], conn: Optional[sqlite3.Connection]=None) -> None:
-        """ Load the dataset from the sqlite file.
-
-        :param sql_path: The path to the sqlite file.
-        :param dataset_ids: The List of ids of the dataset to be loaded.
-        :param conn: The connection to the sqlite file. If not provided, a new connection will be created.
-        """
-        datasets = []
-        for dataset_id in dataset_ids:
-            datasets.append(TimeSeriesData.deserialize_from_file(sql_path, dataset_id, conn))
-        return cls(None, None, None, None, None, None, None, None, timeseries_datasets=datasets)
-
-
 class ModelPerformance:
     """
     This class stores the model performance during training, validation and testing.
@@ -349,7 +268,7 @@ class ModelPerformance:
         residuals_[digit]: The residuals generated by each instance of model tested on each dataset of specify slicing. digits represents dataset_id. Primary Key: id, type
     """
 
-    def __init__(self, model: torch.nn.Module, dataset: Union[TimeSeriesData, TimeSeriesDataCollection], training_record: pd.DataFrame, training_residuals: pd.DataFrame, testing_residuals: pd.DataFrame, training_info: pd.Series, testing_info: pd.Series) -> None:
+    def __init__(self, model: torch.nn.Module, dataset: TimeSeriesData, training_record: pd.DataFrame, training_residuals: pd.DataFrame, testing_residuals: pd.DataFrame, training_info: pd.Series, testing_info: pd.Series) -> None:
         """
         Initializer for ModelPerformance object.
 
@@ -369,7 +288,7 @@ class ModelPerformance:
         self.training_info = training_info
         self.testing_info = testing_info
 
-    def serialize_to_file(self, sql_path: str, additional_note_dataset: str='', additonal_note_model: str='', conn: Optional[sqlite3.Connection]=None) -> None:
+    def serialize_to_file(self, sql_path: str, additional_note_dataset: str='', additonal_note_model: str='', conn: Optional[sqlite3.Connection]=None) -> NonnegativeInt:
         """ Write the performance of the model to a csv file and the trained model to file.
 
         Primary keys for dataset is dataset_id, primary keys for model is model_id, dataset_id, train_start, train_end.
@@ -377,9 +296,13 @@ class ModelPerformance:
         :param additional_note_dataset: Additional notes to be added to describe the dataset.
         :param additonal_note_model: Additional notes to be added to describe the model.
         :param conn: The connection to the sqlite file. If not provided, a new connection will be created.
+        :return: The assigned id of the testing instance.
         """
-        create_parent_directory(sql_path)
-        newconn = sqlite3.connect(sql_path)
+        if conn is None:
+            create_parent_directory(sql_path)
+            newconn = sqlite3.connect(sql_path)
+        else:
+            newconn = conn
 
         ## Store Dataset Information
         searched_id = self.dataset.serialize_to_file(sql_path, additional_note_dataset, newconn)
@@ -431,17 +354,23 @@ class ModelPerformance:
             warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.testing_info[id_col] = searched_id
 
-        newconn.close()
+        if conn is None:
+            newconn.close()
+        return searched_id
 
     @classmethod
-    def deserialize_from_file(cls, sql_path: str, testing_id: NonnegativeInt):
+    def deserialize_from_file(cls, sql_path: str, testing_id: NonnegativeInt, conn: Optional[sqlite3.Connection]=None):
         """ Read the performance of the model from a csv file and the trained model from file.
 
         :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
         :param testing_id: The id of the testing. Other information will be inferred and loaded.
         :return: The loaded ModelPerformance object.
         """
-        newconn = sqlite3.connect(sql_path)
+        if conn is None:
+            create_parent_directory(sql_path)
+            newconn = sqlite3.connect(sql_path)
+        else:
+            newconn = conn
 
         ## Load Testing Information
         testing_info = pd.read_sql_query(f'SELECT * FROM testing_info WHERE testing_id={testing_id}', newconn).T[0]
@@ -459,13 +388,11 @@ class ModelPerformance:
         model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={training_info["model_id"]}', newconn).T[0]
 
         ## Load Dataset Information
-        if re.match(r'\[[\d,\s]*\]', training_info['dataset_id']):
-            dataset_ids = eval(training_info['dataset_id'])
-            dataset = TimeSeriesDataCollection.deserialize_from_file(sql_path, dataset_ids, newconn)
-        else:
-            dataset_id = training_info['dataset_id']
-            dataset = TimeSeriesData.deserialize_from_file(sql_path, dataset_id, newconn)
-        newconn.close()
+        dataset_id = training_info['dataset_id']
+        dataset = TimeSeriesData.deserialize_from_file(sql_path, dataset_id, newconn)
+
+        if conn is None:
+            newconn.close()
 
         return cls(model, dataset, training_record, training_residuals, testing_residuals, training_info, testing_info)
 
@@ -548,7 +475,7 @@ class ModelPerformanceOnline:
 
     def __init__(self,
                  model: torch.nn.Module,
-                 dataset: Union[TimeSeriesData, TimeSeriesDataCollection],
+                 dataset: TimeSeriesData,
                  update_rule,
                  info: pd.Series) -> None:
         """
@@ -567,16 +494,21 @@ class ModelPerformanceOnline:
         self.info = info
         self.update_rule = update_rule
 
-    def serialize_to_file(self, sql_path: str, additional_note_dataset: str='', additonal_note_model: str='') -> None:
+    def serialize_to_file(self, sql_path: str, additional_note_dataset: str='', additonal_note_model: str='', conn: Optional[sqlite3.Connection]=None) -> NonnegativeInt:
         """ Write the performance of the model to a csv file and the trained model to file.
 
         Primary keys for dataset is dataset_id, primary keys for model is model_id, dataset_id, train_start, train_end.
         :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
         :param additional_note_dataset: Additional notes to be added to describe the dataset.
         :param additonal_note_model: Additional notes to be added to describe the model.
+        :param conn: The connection to the sqlite file. If None, a new connection will be created.
+        :return: The assigned id for the simulation.
         """
-        create_parent_directory(sql_path)
-        newconn = sqlite3.connect(sql_path)
+        if conn is None:
+            create_parent_directory(sql_path)
+            newconn = sqlite3.connect(sql_path)
+        else:
+            newconn = conn
 
         ## Store Dataset Information
         table_name = 'dataset_info'
@@ -644,17 +576,24 @@ class ModelPerformanceOnline:
             warn(f'info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.info[id_col] = searched_id
 
-        newconn.close()
+        if not newconn.closed:
+            newconn.close()
+        return searched_id
 
     @classmethod
-    def deserialize_from_file(cls, sql_path: str, sim_id: NonnegativeInt):
+    def deserialize_from_file(cls, sql_path: str, sim_id: NonnegativeInt, conn: Optional[sqlite3.Connection]=None):
         """ Read the performance of the model from a csv file and the trained model from file.
 
         :param sql_path: The path to the sqlite file. The same folder will be used to store the model as well.
         :param testing_id: The id of the testing. Other information will be inferred and loaded.
+        :param conn: The connection to the sqlite file. If None, a new connection will be created.
         :return: The loaded ModelPerformance object.
         """
-        newconn = sqlite3.connect(sql_path)
+        if conn is None:
+            create_parent_directory(sql_path)
+            newconn = sqlite3.connect(sql_path)
+        else:
+            newconn = conn
 
         sim_info = pd.read_sql_query(f'SELECT * FROM online_sim_info WHERE sim_id={sim_id}', newconn).T[0]
 
@@ -684,7 +623,9 @@ class ModelPerformanceOnline:
         exog_cols = dataset_info['exog'].split(',')
         dataset = TimeSeriesData(data_info[endog_cols], data_info[exog_cols], dataset_info['seq_len'] if not pd.isna(dataset_info['seq_len']) else None, dataset_info['name'])
         dataset.info = dataset_info
-        newconn.close()
+
+        if not newconn.closed:
+            newconn.close()
 
         result = cls(model, dataset, update_rule, sim_info)
         result.update_rule.update_logs = update_logs
@@ -693,6 +634,7 @@ class ModelPerformanceOnline:
         result.update_rule.train_record = train_record
         result.update_rule.train_residuals = train_residuals
         result.update_rule.test_residuals = test_residuals
+
         return result
 
     def plot_training_records(self):
