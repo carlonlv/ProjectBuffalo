@@ -386,6 +386,7 @@ class ModelPerformance:
         training_info = pd.read_sql_query(f'SELECT * FROM training_info WHERE training_id={testing_info["training_id"]}', newconn).T[0]
         model = torch.load(f'{os.path.dirname(sql_path)}/model-training_id-{training_info["training_id"]}.pt')
         training_record = pd.read_sql_query(f'SELECT * FROM training_record WHERE training_id={training_info["training_id"]}', newconn).drop(columns=['training_id'])
+        training_record = training_record.replace({None: np.nan})
 
         ## Load Residuals
         testing_residuals = pd.read_sql_query(f'SELECT * FROM "testing_residuals-{testing_info["testing_id"]}"', newconn, index_col='index')
@@ -414,11 +415,11 @@ class ModelPerformance:
         plt1.set_xlabel('Epoch')
         plt1.set_ylabel('Training Loss')
         plt.subplot(2, 1, 2) # Create subplot for validation loss plot
-        plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records)
-        plt2.set_title('Validation Loss over Time')
-        plt2.set_xlabel('Epoch')
-        plt2.set_ylabel('Validation Loss')
-
+        if not training_records['validation_loss'].isnull().all():
+            plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records)
+            plt2.set_title('Validation Loss over Time')
+            plt2.set_xlabel('Epoch')
+            plt2.set_ylabel('Validation Loss')
         plt.subplots_adjust(hspace=0.5)
         plt.show()
 
@@ -576,7 +577,7 @@ class ModelPerformanceOnline:
             self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=False, if_exists='replace')
             self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
             self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
-            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=False)
             self.update_rule.train_residuals.to_sql(f'online_train_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
             self.update_rule.test_residuals.to_sql(f'online_test_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
         else:
@@ -609,11 +610,11 @@ class ModelPerformanceOnline:
         model_id = sim_info['model_id']
 
         update_logs = pd.read_sql_query(f'SELECT * FROM "online_update_logs-sim_id-{sim_id}"', newconn)
-        train_logs = pd.read_sql_query(f'SELECT * FROM "online_train_logs-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
-        test_logs = pd.read_sql_query(f'SELECT * FROM "online_test_logs-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
-        train_record = pd.read_sql_query(f'SELECT * FROM "online_train_record-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
-        train_residuals = pd.read_sql_query(f'SELECT * FROM "online_train_residuals-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
-        test_residuals = pd.read_sql_query(f'SELECT * FROM "online_test_residuals-sim_id-{sim_id}"', newconn, index_col='time', parse_dates=['time'])
+        train_logs = pd.read_sql_query(f'SELECT * FROM "online_train_logs-sim_id-{sim_id}"', newconn, index_col='time')
+        test_logs = pd.read_sql_query(f'SELECT * FROM "online_test_logs-sim_id-{sim_id}"', newconn, index_col='time')
+        train_record = pd.read_sql_query(f'SELECT * FROM "online_train_record-sim_id-{sim_id}"', newconn)
+        train_residuals = pd.read_sql_query(f'SELECT * FROM "online_train_residuals-sim_id-{sim_id}"', newconn, index_col='time')
+        test_residuals = pd.read_sql_query(f'SELECT * FROM "online_test_residuals-sim_id-{sim_id}"', newconn, index_col='time')
 
         model = torch.load(f'{os.path.dirname(sql_path)}/model-sim_id-{sim_id}.pt')
 
