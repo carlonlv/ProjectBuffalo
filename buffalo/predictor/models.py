@@ -144,8 +144,6 @@ class LSTM(nn.Module):
         batchnorm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.batch_norm.named_parameters() if 'weight' in name])
         lstm_param_count = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
         lstm_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.model.named_parameters() if 'weight' in name])
-        fc_param_count = sum(p.numel() for p in self.f_c.parameters() if p.requires_grad)
-        fc_connection_count = sum([torch.prod(torch.tensor(param.shape)).item() for name, param in self.f_c.named_parameters() if 'weight' in name])
         self.info = {'name': 'LSTM',
                      'input_size': input_size,
                      'hidden_size': hidden_size,
