@@ -275,6 +275,8 @@ def train_and_evaluate_model_online(model: nn.Module,
     if dataset_not_provided:
         dataset = model.dataset
 
+    assert isinstance(dataset, TimeSeriesData), 'The dataset must be a TimeSeriesData object.'
+
     start_index = ceil(len(dataset) * train_ratio)
     end_index = len(dataset)
 

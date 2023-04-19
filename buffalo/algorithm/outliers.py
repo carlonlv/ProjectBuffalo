@@ -976,7 +976,7 @@ class IterativeTtestOutlierDetectionResult:
             if searched_id == 1:
                 pd.DataFrame(algo_info, index=[0]).to_sql('ol_algo_info', newconn, index=False)
             else:
-                pd.concat((pd.read_sql_query('SELECT * FROM algo_info', newconn), pd.DataFrame(algo_info, index=[0])), axis=0, ignore_index=True).to_sql('ol_algo_info', newconn, index=False, if_exists='replace')
+                pd.concat((pd.read_sql_query('SELECT * FROM ol_algo_info', newconn), pd.DataFrame(algo_info, index=[0])), axis=0, ignore_index=True).to_sql('ol_algo_info', newconn, index=False, if_exists='replace')
         else:
             warn(f'algo_info with the same primary keys already exists with id {searched_id}, will not store model information.')
             algo_info['algo_id'] = searched_id

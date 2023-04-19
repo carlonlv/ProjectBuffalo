@@ -192,9 +192,9 @@ class TimeSeriesData(Dataset):
             start_index_label = end_index_label - (end_index_predictor - start_index_predictor) ## By default match the same length as predictor
 
         if self.split_endog is None:
-            return [self.dataset[start_index_predictor:end_index_predictor,:]], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), None
+            return [self.dataset[start_index_predictor:end_index_predictor,:]], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), 0
         else:
-            return [self.dataset[start_index_predictor:end_index_predictor, x] for x in self.split_endog], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), None
+            return [self.dataset[start_index_predictor:end_index_predictor, x] for x in self.split_endog], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), 0
 
     def serialize_to_file(self, sql_path: str, additional_note: str='', conn: Optional[sqlite3.Connection]=None) -> NonnegativeInt:
         """ Write the performance of the model to a csv file and the trained model to file.
@@ -498,19 +498,20 @@ class ModelPerformance:
         else:
             return parse_single_dataset(self.dataset, self.training_residuals, self.testing_residuals)
 
-    def plot_training_records(self):
+    def plot_training_records(self, figsize=(12, 8)):
         """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
+
+        :param figsize: The size of the figure.
         """
         training_records = self.training_record.copy()
         training_records['fold'] = training_records['fold'].astype(int).astype(str)
-        plt.subplot(2, 1, 1) # Create subplot for training loss plot
-        plt1 = sns.lineplot(x='epoch', y='training_loss', hue='fold', data=training_records)
+        _, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
+        plt1 = sns.lineplot(x='epoch', y='training_loss', hue='fold', data=training_records, ax=ax1)
         plt1.set_title('Training Loss over Time')
         plt1.set_xlabel('Epoch')
         plt1.set_ylabel('Training Loss')
-        plt.subplot(2, 1, 2) # Create subplot for validation loss plot
         if not training_records['validation_loss'].isnull().all():
-            plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records)
+            plt2 = sns.lineplot(x='epoch', y='validation_loss', hue='fold', data=training_records, ax=ax2)
             plt2.set_title('Validation Loss over Time')
             plt2.set_xlabel('Epoch')
             plt2.set_ylabel('Validation Loss')
@@ -526,7 +527,7 @@ class ModelPerformance:
 
         info_series['series'] = 'Dataset'+ info_series['dataset_index'].astype(int).astype(str) + ':' + info_series['series']
 
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=figsize)
+        _, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=figsize)
         plt1 = sns.lineplot(data=info_series, x='time', y='price', hue='series', errorbar=None, ax=ax1, legend=False)
         plt1.set_title('Original Time Series', fontsize=12)
         plt1.set_xlabel('Time', fontsize=10)
@@ -600,7 +601,7 @@ class ModelPerformanceOnline:
         newconn = sqlite3.connect(sql_path)
 
         ## Store Dataset Information
-        searched_id = self.dataset.serialize_to_file(sql_path, additional_note_dataset=additional_note_dataset, newconn=newconn)
+        searched_id = self.dataset.serialize_to_file(sql_path, additional_note_dataset, newconn)
         dataset_id = str(searched_id)
 
         ## Store Model Information
