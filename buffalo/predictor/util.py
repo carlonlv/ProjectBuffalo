@@ -487,11 +487,12 @@ class ModelPerformance:
             residuals['series'] = residuals['n_endog'].apply(lambda x: series_names[x])
             residuals = pd.merge(residuals, endog_long, on=['series', 'index'], how='outer')
             residuals['predicted'] = residuals['price'] - residuals['residual']
+            residuals['dataset_index'] = residuals['dataset_index'].ffill().bfill()
             return residuals[['time', 'n_ahead', 'index', 'series', 'price', 'predicted', 'residual', 'dataset_index', 'is_train']]
 
         if isinstance(self.dataset, TimeSeriesDataCollection):
             result = []
-            for dataset_id, dataset in enumerate(self.dataset):
+            for dataset_id, dataset in enumerate(self.dataset.datasets):
                 result.append(parse_single_dataset(dataset, self.training_residuals[self.training_residuals['dataset_index'] == dataset_id], self.testing_residuals[self.testing_residuals['dataset_index'] == dataset_id]))
             return pd.concat(result, axis=0)
         else:
@@ -522,26 +523,27 @@ class ModelPerformance:
         :param figsize: The size of the figure.
         """
         info_series = self.get_endog_resid_predicted()
-        info_series['series'] = 'Dataset'+ info_series['dataset_index'] + ':' + info_series['series'] + 'from ' + info_series['n_ahead'] + 'steps'
 
-        plt.subplots(figsize=figsize)
-        plt.subplot(3, 1, 1)
-        plt1 = sns.lineplot(data=info_series, x='time', y='price', hue='series', errorbar=None)
+        info_series['series'] = 'Dataset'+ info_series['dataset_index'].astype(int).astype(str) + ':' + info_series['series']
+
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=figsize)
+        plt1 = sns.lineplot(data=info_series, x='time', y='price', hue='series', errorbar=None, ax=ax1, legend=False)
         plt1.set_title('Original Time Series', fontsize=12)
         plt1.set_xlabel('Time', fontsize=10)
         plt1.set_ylabel('Price', fontsize=10)
 
-        first_test_time = info_series[~info_series['is_train']]['time'].min()
+        info_series = info_series.dropna()
+        info_series['series'] = info_series['series'] + ' from ' + info_series['n_ahead'].astype(int).astype(str) + 'steps'
 
-        plt.subplot(3, 1, 2)
-        plt2 = sns.lineplot(data=info_series, x='time', y='predicted', hue='series', errorbar=None)
+        first_test_time = info_series[~info_series['is_train'].astype(bool)]['time'].min()
+
+        plt2 = sns.lineplot(data=info_series, x='time', y='predicted', hue='series', errorbar=None, ax=ax2, legend=False)
         plt2.axvline(x=first_test_time, color='black')
         plt2.set_title('Predicted Time Series', fontsize=12)
         plt2.set_xlabel('Time', fontsize=10)
         plt2.set_ylabel('Price', fontsize=10)
 
-        plt.subplot(3, 1, 3)
-        plt3 = sns.lineplot(data=info_series, x='time', y='residual', hue='series', errorbar=None)
+        plt3 = sns.lineplot(data=info_series, x='time', y='residual', hue='series', errorbar=None, ax=ax3, legend=False)
         plt3.axvline(x=first_test_time, color='black')
         plt3.set_title('Residual Time Series', fontsize=12)
         plt3.set_xlabel('Time', fontsize=10)
