@@ -140,25 +140,23 @@ def train_and_evaluate_model(model: nn.Module,
         train_losses = []
         for fold, indice_info in tqdm(indices.groupby('n_fold'), desc='Multi-fold validation', position=0, leave=True, total=len(indices['n_fold'].unique())):
             model.load_state_dict(init_state_dict) ## Reset the model parameters
+            train_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'train_start']), int(indice_info.loc[i, 'train_end']))) for i in indice_info['dataset_index']])
+            train_set = Subset(dataset,train_indices)
+            train_loader = DataLoader(train_set, **dataloader_args)
+            valid_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'valid_start']) if not np.isnan(indice_info.loc[i,'valid_start']) else 0,
+                                                                 int(indice_info.loc[i, 'valid_end']) if not np.isnan(indice_info.loc[i,'valid_end']) else 0)) for i in indice_info['dataset_index']])
+            if len(valid_indices) > 0:
+                valid_set = Subset(dataset, valid_indices)
+                valid_loader = DataLoader(valid_set, **dataloader_args)
+            else:
+                valid_loader = None
+
             with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
                 for epoch in range(epochs):
-                    train_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'train_start']), int(indice_info.loc[i, 'train_end']))) for i in indice_info['dataset_index']])
-                    train_set = Subset(dataset,train_indices)
-                    train_loader = DataLoader(train_set, **dataloader_args)
-                    valid_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'valid_start']) if not np.isnan(indice_info.loc[i,'valid_start']) else 0,
-                                                                         int(indice_info.loc[i, 'valid_end']) if not np.isnan(indice_info.loc[i,'valid_end']) else 0)) for i in indice_info['dataset_index']])
-                    if len(valid_indices) > 0:
-                        valid_set = Subset(dataset, valid_indices)
-                        valid_loader = DataLoader(valid_set, **dataloader_args)
-                    else:
-                        valid_loader = None
-
                     train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, clip_grad=clip_grad)
-
                     if valid_loader is not None:
                         with no_grad():
                             valid_loss, _ = run_epoch(model, optimizer, loss_func, valid_loader, is_train=False, clip_grad=clip_grad)
-
                     curr_record = pd.Series({
                         'fold': fold,
                         'epoch': epoch,
