@@ -749,10 +749,10 @@ class ModelPerformanceOnline:
         if isinstance(self.dataset, TimeSeriesDataCollection):
             result = []
             for dataset_id, dataset in enumerate(self.dataset):
-                result.append(parse_single_dataset(dataset, self.training_residuals[self.training_residuals['dataset_index'] == dataset_id], self.testing_residuals[self.testing_residuals['dataset_index'] == dataset_id]))
+                result.append(parse_single_dataset(dataset, self.update_rule.training_residuals[self.training_residuals['dataset_index'] == dataset_id], self.update_rule.testing_residuals[self.testing_residuals['dataset_index'] == dataset_id]))
             return pd.concat(result, axis=0)
         else:
-            return parse_single_dataset(self.dataset, self.training_residuals, self.testing_residuals)
+            return parse_single_dataset(self.dataset, self.update_rule.training_residuals, self.update_rule.testing_residuals)
 
     def plot_logs(self):
         """ Plot the training loss and validation loss over time, used to check the convergence speed.

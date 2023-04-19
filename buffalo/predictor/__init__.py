@@ -1,6 +1,7 @@
 """
 This module contains models for trend predictor for time series.
 """
+from functools import reduce
 import timeit
 from copy import deepcopy
 from itertools import product
@@ -68,7 +69,7 @@ def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
                              loss_func: Any,
                              dataset: Optional[TimeSeriesData],
-                             epochs_per_fold: PositiveInt,
+                             epochs: PositiveInt,
                              test_ratio: Prob,
                              n_fold: PositiveInt=3,
                              clip_grad: Optional[PositiveFlt]=None,
@@ -80,7 +81,7 @@ def train_and_evaluate_model(model: nn.Module,
     :param  : The optimizer.
     :param loss_func: The loss function.
     :param dataset: The data set used to split the training, validation and test set.
-    :param epochs_per_fold: The number of epochs per fold. Later folds will have more epochs because the model is trained on more data.
+    :param epochs: The number of epochs.
     :param test_ratio: The ratio of the test set.
     :param n_fold: The number of folds for cross validation, the K+1th fold will be treated as test set, Kth fold will be treated as validation set, and the first K-1 fold will be treated as dataset. n_fold has be at least 2.
     :param clip_grad: The maximum gradient norm to be clipped. If None, then no gradient clipping is performed.
@@ -89,38 +90,65 @@ def train_and_evaluate_model(model: nn.Module,
     :param dataloader_args: The arguments for the data loader.
     :return: The training record.
     """
+    def get_train_valid_indices(train_size, n_fold):
+        fold_size = floor(train_size / n_fold)
+        indices = pd.DataFrame({'n_fold': np.arange(1, n_fold+1)})
+        indices['train_start'] = 0
+        indices['train_end'] = indices['train_start'] + indices['n_fold'] * fold_size
+        indices['valid_start'] = indices['train_end']
+        indices['valid_end'] = indices['valid_start'] + fold_size
+        indices = indices.loc[indices['train_end'] <= train_size]
+        indices.loc[indices['valid_end'] > train_size, ['valid_start', 'valid_end']] = np.nan
+        return indices
+
+    def translate_local_indice_to_global(dataset, indice, dataset_index):
+        if np.isnan(indice):
+            return indice
+        if isinstance(dataset, TimeSeriesData):
+            return indice
+        else:
+            start_indices = np.cumsum([0] + [len(x) for x in dataset.datasets[:-1]])
+            return indice + start_indices[int(dataset_index)]
+
     dataset_not_provided = dataset is None
     if dataset_not_provided:
         dataset = model.dataset
 
-    test_size = ceil(len(dataset) * test_ratio)
-    train_size = len(dataset) - test_size
-    if train_size > 0:
+    if isinstance(dataset, TimeSeriesData):
+        test_size = [ceil(len(dataset) * test_ratio)]
+        train_size = [len(dataset) - test_size[0]]
+    else:
+        test_size= [ceil(len(x) * test_ratio) for x in dataset.datasets]
+        train_size = [len(x) - y for x, y in zip(dataset.datasets, test_size)]
+
+    if any([x > 0 for x in train_size]):
         train_start_time = timeit.default_timer()
         assert n_fold > 0, 'n_fold must be at least 1.'
 
-        if n_fold > 1:
-            ## Cross validation, train, validation and test split
-            fold_size = floor(train_size / n_fold)
-            indices = [((0, i*fold_size), (i*fold_size, (i+1)*fold_size)) for i in range(1, n_fold)]
-            indices.append(((0, train_size-1), ()))
-        else:
-            ## No cross validation, only train and test split
-            indices = [((0, train_size-1), ())]
+        indices = []
+        for i, train_s in enumerate(train_size):
+            indices.append(get_train_valid_indices(train_s, n_fold).assign(dataset_index=i))
+        indices = pd.concat(indices, axis=0, ignore_index=True)
+        indices['train_start'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['train_start'], x['dataset_index']), axis=1)
+        indices['train_end'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['train_end'], x['dataset_index']), axis=1)
+        indices['valid_start'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['valid_start'], x['dataset_index']), axis=1)
+        indices['valid_end'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['valid_end'], x['dataset_index']), axis=1)
 
         init_state_dict = deepcopy(model.state_dict())
         train_record = []
         train_valid_loss = []
         train_losses = []
-        for fold, (train_indice, valid_indice) in tqdm(enumerate(indices), desc='Multi-fold validation', position=0, leave=True, total=len(indices)):
+        for fold, indice_info in tqdm(indices.groupby('n_fold'), desc='Multi-fold validation', position=0, leave=True, total=len(indices['n_fold'].unique())):
             model.load_state_dict(init_state_dict) ## Reset the model parameters
-            epochs = (fold + 1) * epochs_per_fold
             with tqdm(total=epochs, desc='Epoch', position=1, leave=True) as pbar:
                 for epoch in range(epochs):
-                    train_set = Subset(dataset, range(*train_indice))
+                    train_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'train_start']), int(indice_info.loc[i, 'train_end']))) for i in indice_info['dataset_index']])
+                    train_set = Subset(dataset,train_indices)
                     train_loader = DataLoader(train_set, **dataloader_args)
-                    if len(valid_indice) > 0 and valid_indice[1] > valid_indice[0]:
-                        valid_set = Subset(dataset, range(*valid_indice))
+                    valid_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'valid_start']) if not np.isnan(indice_info.loc[i,'valid_start']) else 0,
+                                                                         int(indice_info.loc[i, 'valid_end']) if not np.isnan(indice_info.loc[i,'valid_end']) else 0)) for i in indice_info['dataset_index']])
+                    if len(valid_indices) > 0:
+                        valid_set = Subset(dataset, valid_indices)
                         valid_loader = DataLoader(valid_set, **dataloader_args)
                     else:
                         valid_loader = None
@@ -134,10 +162,8 @@ def train_and_evaluate_model(model: nn.Module,
                     curr_record = pd.Series({
                         'fold': fold,
                         'epoch': epoch,
-                        'train_start': train_indice[0],
-                        'train_end': train_indice[1]-1,
-                        'valid_start': valid_indice[0] if valid_loader is not None else np.nan,
-                        'valid_end': valid_indice[1]-1 if valid_loader is not None else np.nan,
+                        'train_size': len(train_indices),
+                        'valid_size': len(valid_indices),
                         'training_loss': train_loss,
                         'validation_loss': valid_loss if valid_loader is not None else np.nan
                     })
