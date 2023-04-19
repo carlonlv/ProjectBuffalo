@@ -6,7 +6,7 @@ import timeit
 from copy import deepcopy
 from itertools import product
 from math import ceil, floor
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,7 @@ from tqdm.auto import tqdm
 
 from ..algorithm.online_update import OnlineUpdateRule
 from ..utility import PositiveFlt, PositiveInt, Prob
-from .util import ModelPerformance, ModelPerformanceOnline, TimeSeriesData
+from .util import ModelPerformance, ModelPerformanceOnline, TimeSeriesData, TimeSeriesDataCollection
 
 
 def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: DataLoader, is_train: bool, clip_grad: Optional[PositiveFlt]=None):
@@ -65,10 +65,80 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
 
     return loss_sum / total_samples, pd.concat(curr_resids, axis=0, ignore_index=True).drop_duplicates(keep='last')
 
+def get_train_valid_test_indices(dataset: Union[TimeSeriesData, TimeSeriesDataCollection], test_ratio: Prob, n_fold: PositiveInt=3):
+    """ Get train, validation and test indices lookup for each dataset and each fold.
+
+    :param dataset: The dataset.
+    :param test_ratio: The ratio of the test set.
+    :param n_fold: The number of folds for cross validation, the K+1th fold will be treated as test set, Kth fold will be treated as validation set, and the first K-1 fold will be treated as dataset. n_fold has be at least 2.
+    :return: The train, validation and test indices lookup for each dataset and each fold.
+    """
+    def translate_local_indice_to_global(start_indices, indice, dataset_index):
+        if np.isnan(indice):
+            return indice
+        if isinstance(dataset, TimeSeriesData):
+            return indice
+        else:
+            return indice + start_indices[int(dataset_index)]
+
+    if isinstance(dataset, TimeSeriesData):
+        datasets = [dataset]
+    else:
+        datasets = dataset.datasets
+
+    dataset_start_indices = np.cumsum([0] + [len(x) for x in datasets[:-1]])
+
+    train_indices_lookup = {} ## [fold_idx] -> List[int]
+    valid_indices_lookup = {} ## [fold_idx] -> List[int]
+    test_indices_lookup = [] ## [] -> List[int]
+    for dataset_index, data in enumerate(datasets):
+        test_size = ceil(len(data) * test_ratio)
+        train_size = len(data) - test_size
+
+        fold_size = floor(train_size / n_fold)
+        for fold_idx in range(1, n_fold+1):
+            train_start = 0 + (fold_idx - 1) * fold_size
+            train_end = train_start + fold_size
+            if fold_idx == n_fold:
+                valid_start = np.nan
+                valid_end = np.nan
+            else:
+                valid_start = train_end
+                valid_end = valid_start + fold_size
+
+            train_start = translate_local_indice_to_global(dataset_start_indices, train_start, dataset_index)
+            train_end = translate_local_indice_to_global(dataset_start_indices, train_end, dataset_index)
+            if fold_idx in train_indices_lookup:
+                if not np.isnan(train_start) and not np.isnan(train_end):
+                    train_indices_lookup[fold_idx] += list(range(train_start, train_end))
+            else:
+                if not np.isnan(train_start) and not np.isnan(train_end):
+                    train_indices_lookup[fold_idx] = list(range(train_start, train_end))
+                else:
+                    train_indices_lookup[fold_idx] = []
+
+            valid_start = translate_local_indice_to_global(dataset_start_indices, valid_start, dataset_index)
+            valid_end = translate_local_indice_to_global(dataset_start_indices, valid_end, dataset_index)
+            if fold_idx in valid_indices_lookup:
+                if not np.isnan(valid_start) and not np.isnan(valid_end):
+                    valid_indices_lookup[fold_idx] += list(range(valid_start, valid_end))
+            else:
+                if not np.isnan(valid_start) and not np.isnan(valid_end):
+                    valid_indices_lookup[fold_idx] = list(range(valid_start, valid_end))
+                else:
+                    valid_indices_lookup[fold_idx] = []
+
+        test_start = len(data) - test_size
+        test_end = len(data)
+        test_start = translate_local_indice_to_global(dataset_start_indices, test_start, dataset_index)
+        test_end = translate_local_indice_to_global(dataset_start_indices, test_end, dataset_index)
+        test_indices_lookup += list(range(test_start, test_end))
+    return train_indices_lookup, valid_indices_lookup, test_indices_lookup
+
 def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
                              loss_func: Any,
-                             dataset: Optional[TimeSeriesData],
+                             dataset: Optional[Union[TimeSeriesData, TimeSeriesDataCollection]],
                              epochs: PositiveInt,
                              test_ratio: Prob,
                              n_fold: PositiveInt=3,
@@ -90,61 +160,26 @@ def train_and_evaluate_model(model: nn.Module,
     :param dataloader_args: The arguments for the data loader.
     :return: The training record.
     """
-    def get_train_valid_indices(train_size, n_fold):
-        fold_size = floor(train_size / n_fold)
-        indices = pd.DataFrame({'n_fold': np.arange(1, n_fold+1)})
-        indices['train_start'] = 0
-        indices['train_end'] = indices['train_start'] + indices['n_fold'] * fold_size
-        indices['valid_start'] = indices['train_end']
-        indices['valid_end'] = indices['valid_start'] + fold_size
-        indices = indices.loc[indices['train_end'] <= train_size]
-        indices.loc[indices['valid_end'] > train_size, ['valid_start', 'valid_end']] = np.nan
-        return indices
-
-    def translate_local_indice_to_global(dataset, indice, dataset_index):
-        if np.isnan(indice):
-            return indice
-        if isinstance(dataset, TimeSeriesData):
-            return indice
-        else:
-            start_indices = np.cumsum([0] + [len(x) for x in dataset.datasets[:-1]])
-            return indice + start_indices[int(dataset_index)]
-
     dataset_not_provided = dataset is None
     if dataset_not_provided:
         dataset = model.dataset
 
-    if isinstance(dataset, TimeSeriesData):
-        test_size = [ceil(len(dataset) * test_ratio)]
-        train_size = [len(dataset) - test_size[0]]
-    else:
-        test_size= [ceil(len(x) * test_ratio) for x in dataset.datasets]
-        train_size = [len(x) - y for x, y in zip(dataset.datasets, test_size)]
+    train_indices_lookup, valid_indices_lookup, test_indices_lookup = get_train_valid_test_indices(dataset, test_ratio, n_fold)
 
-    if any([x > 0 for x in train_size]):
+    non_empty_train_indices = any([len(x) > 0 for x in train_indices_lookup.values()])
+    if non_empty_train_indices:
         train_start_time = timeit.default_timer()
-        assert n_fold > 0, 'n_fold must be at least 1.'
-
-        indices = []
-        for i, train_s in enumerate(train_size):
-            indices.append(get_train_valid_indices(train_s, n_fold).assign(dataset_index=i))
-        indices = pd.concat(indices, axis=0, ignore_index=True)
-        indices['train_start'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['train_start'], x['dataset_index']), axis=1)
-        indices['train_end'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['train_end'], x['dataset_index']), axis=1)
-        indices['valid_start'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['valid_start'], x['dataset_index']), axis=1)
-        indices['valid_end'] = indices.apply(lambda x: translate_local_indice_to_global(dataset, x['valid_end'], x['dataset_index']), axis=1)
 
         init_state_dict = deepcopy(model.state_dict())
         train_record = []
         train_valid_loss = []
         train_losses = []
-        for fold, indice_info in tqdm(indices.groupby('n_fold'), desc='Multi-fold validation', position=0, leave=True, total=len(indices['n_fold'].unique())):
+        for fold in tqdm(train_indices_lookup, desc='Multi-fold validation', position=0, leave=True, total=len(train_indices_lookup)):
             model.load_state_dict(init_state_dict) ## Reset the model parameters
-            train_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'train_start']), int(indice_info.loc[i, 'train_end']))) for i in indice_info['dataset_index']])
-            train_set = Subset(dataset,train_indices)
+            train_indices = train_indices_lookup[fold]
+            train_set = Subset(dataset, train_indices)
             train_loader = DataLoader(train_set, **dataloader_args)
-            valid_indices = reduce(lambda x, y: x+y, [list(range(int(indice_info.loc[i, 'valid_start']) if not np.isnan(indice_info.loc[i,'valid_start']) else 0,
-                                                                 int(indice_info.loc[i, 'valid_end']) if not np.isnan(indice_info.loc[i,'valid_end']) else 0)) for i in indice_info['dataset_index']])
+            valid_indices = valid_indices_lookup[fold]
             if len(valid_indices) > 0:
                 valid_set = Subset(dataset, valid_indices)
                 valid_loader = DataLoader(valid_set, **dataloader_args)
@@ -176,9 +211,10 @@ def train_and_evaluate_model(model: nn.Module,
         train_stop_time = timeit.default_timer()
 
     ## Test the model
-    if test_size > 0:
+    non_empty_test_indices = len(test_indices_lookup) > 0
+    if non_empty_test_indices:
         test_start_time = timeit.default_timer()
-        test_set = Subset(dataset, range(len(dataset)-test_size, len(dataset)))
+        test_set = Subset(dataset, test_indices_lookup)
         test_loader = DataLoader(test_set, **dataloader_args)
         with no_grad():
             test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, clip_grad=clip_grad)
@@ -186,33 +222,31 @@ def train_and_evaluate_model(model: nn.Module,
 
     print(f'Averaged validation loss: {np.nanmean(train_valid_loss)}. Test loss: {test_loss}.')
 
-    training_info = {'train_start': 0 if train_size > 0 else None,
-                     'train_end': train_size-1 if train_size > 0 else None,
+    training_info = {'train_size': len(train_indices_lookup[n_fold]) if non_empty_train_indices else 0,
                      'train_loss_func': str(loss_func),
                      'train_optimizer': str(optimizer),
                      'train_clip_grad': clip_grad,
                      'train_epochs': epochs,
-                     'train_start_time': train_start_time if train_size > 0 else None,
-                     'train_stop_time': train_stop_time if train_size > 0 else None,
-                     'train_elapsed_time': train_stop_time - train_start_time if train_size > 0 else None,
-                     'train_n_fold': n_fold if train_size > 0 else None,
-                     'average_train_loss': np.nanmean(train_losses) if train_size > 0 else None,
-                     'last_train_loss': train_losses[-1] if train_size > 0 else None,
-                     'average_validation_loss': np.nanmean(train_valid_loss) if train_size > 0 else None}
+                     'train_start_time': train_start_time if non_empty_train_indices else None,
+                     'train_stop_time': train_stop_time if non_empty_train_indices else None,
+                     'train_elapsed_time': train_stop_time - train_start_time if non_empty_train_indices else None,
+                     'train_n_fold': n_fold if non_empty_train_indices else None,
+                     'average_train_loss': np.nanmean(train_losses) if non_empty_train_indices else None,
+                     'last_train_loss': train_losses[-1] if non_empty_train_indices else None,
+                     'average_validation_loss': np.nanmean(train_valid_loss) if non_empty_train_indices else None}
     training_info.update(dataloader_args)
-    testing_info = {'test_start': len(dataset)-test_size if test_size > 0 else None,
-                    'test_end': len(dataset) if test_size > 0 else None,
+    testing_info = {'test_size': len(test_indices_lookup),
                     'test_loss_func': str(loss_func),
-                    'test_loss': test_loss if test_size > 0 else None,
-                    'test_start_time': test_start_time if test_size > 0 else None,
-                    'test_stop_time': test_stop_time if test_size > 0 else None,
-                    'test_elapsed_time': test_stop_time - test_start_time if test_size > 0 else None}
+                    'test_loss': test_loss if non_empty_test_indices else None,
+                    'test_start_time': test_start_time if non_empty_test_indices else None,
+                    'test_stop_time': test_stop_time if non_empty_test_indices else None,
+                    'test_elapsed_time': test_stop_time - test_start_time if non_empty_test_indices else None}
 
     return ModelPerformance(model=model,
                             dataset=dataset,
-                            training_record=train_record if train_size > 0 else pd.DataFrame(),
-                            training_residuals=train_resid if train_size > 0 else pd.DataFrame(),
-                            testing_residuals=test_resid if test_size > 0 else pd.DataFrame(),
+                            training_record=train_record if non_empty_train_indices else pd.DataFrame(),
+                            training_residuals=train_resid if non_empty_train_indices else pd.DataFrame(),
+                            testing_residuals=test_resid if non_empty_test_indices else pd.DataFrame(),
                             training_info=training_info,
                             testing_info=testing_info)
 
