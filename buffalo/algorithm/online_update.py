@@ -45,10 +45,10 @@ class OnlineUpdateRule(ABC):
     def __init__(self) -> None:
         self.update_logs = pd.DataFrame()
         self.train_logs = pd.DataFrame()
-        self.train_record = pd.DataFrame()
+        self.training_record = pd.DataFrame()
         self.test_logs = pd.DataFrame()
-        self.train_residuals = pd.DataFrame()
-        self.test_residuals = pd.DataFrame()
+        self.training_residuals = pd.DataFrame()
+        self.testing_residuals = pd.DataFrame()
         self.obs = None
 
     def collect_obs(self, obs: Dataset):
@@ -67,31 +67,31 @@ class OnlineUpdateRule(ABC):
         self.update_logs = pd.DataFrame()
         self.train_logs = pd.DataFrame()
         self.test_logs = pd.DataFrame()
-        self.train_record = pd.DataFrame()
-        self.train_residuals = pd.DataFrame()
-        self.test_residuals = pd.DataFrame()
+        self.training_record = pd.DataFrame()
+        self.training_residuals = pd.DataFrame()
+        self.testing_residuals = pd.DataFrame()
 
-    def collect_train_stats(self, t_index: NonnegativeInt, train_loss: PositiveFlt, train_resid: pd.DataFrame, train_record: pd.DataFrame):
+    def collect_train_stats(self, t_index: NonnegativeInt, train_loss: PositiveFlt, train_resid: pd.DataFrame, training_record: pd.DataFrame):
         """ Collect the training statistics.
 
         :param t_index: The index of the current time step.
         :param train_loss: The training loss.
         :param train_resid: The training residuals.
-        :param train_record: The training record.
+        :param training_record: The training record.
         """
         self.train_logs = pd.concat((self.train_logs, pd.DataFrame({'train_loss': train_loss}, index=[t_index])), axis=0)
-        self.train_record = pd.concat((self.train_record, train_record.assign(t_index=t_index)), ignore_index=True, axis=0)
-        self.train_residuals = pd.concat((self.train_residuals, train_resid.assign(t_index=t_index)), ignore_index=True, axis=0)
+        self.training_record = pd.concat((self.training_record, training_record.assign(t_index=t_index)), ignore_index=True, axis=0)
+        self.training_residuals = pd.concat((self.training_residuals, train_resid.assign(t_index=t_index)), ignore_index=True, axis=0)
 
     def collect_test_stats(self, t_index: NonnegativeInt, test_loss: PositiveFlt, test_resid: pd.DataFrame):
         """ Collect and store the testing statistics.
 
-        :param t_index: The index of the current time step.
+        :param t_index: The index of the current time step.                                                                                                                                                                             
         :param test_loss: The testing loss.
         :param test_resid: The testing residuals.
         """
         self.test_logs = pd.concat((self.test_logs, pd.DataFrame({'test_loss': test_loss}, index=[t_index+1])), axis=0)
-        self.test_residuals = pd.concat((self.test_residuals, test_resid.assign(t_index=t_index+1)), ignore_index=True, axis=0)
+        self.testing_residuals = pd.concat((self.testing_residuals, test_resid.assign(t_index=t_index+1)), ignore_index=True, axis=0)
 
     @abstractmethod
     def get_train_settings(self, t_index: NonnegativeInt) -> Tuple[list, PositiveInt, PositiveFlt]:

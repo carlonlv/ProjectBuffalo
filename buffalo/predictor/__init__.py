@@ -20,7 +20,7 @@ from ..utility import PositiveFlt, PositiveInt, Prob
 from .util import ModelPerformance, ModelPerformanceOnline, TimeSeriesData
 
 
-def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: DataLoader, is_train: bool, residual_cols: List[str], clip_grad: Optional[PositiveFlt]=None):
+def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: DataLoader, is_train: bool, clip_grad: Optional[PositiveFlt]=None):
     """ Run one epoch of training or evaluation.
 
     :param model: The model to be trained or tested.
@@ -28,25 +28,27 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
     :param loss_func: The loss function.
     :param data_loader: The data loader.
     :param is_train: Whether to train the model.
-    :param residual_cols: The columns of the residuals to be returned, typically the same as endog columns.
     :param clip_grad: The maximum norm of the gradient.
     :return: The average loss and the residuals.
     """
     loss_sum = 0
     total_samples = 0
-    col_name = [f'{y}:{x}' for x, y in product(range(1, 1+model.n_ahead), residual_cols)]
-    curr_resid = pd.DataFrame(columns=col_name) ## Initalize the residuals to be nan
+    curr_resids = []
     for batch in data_loader:
         optimizer.zero_grad()
 
-        data, label, index = batch
+        data, label, index, dataset_index = batch ## Tensor, Tensor, Tensor, None/int
         data = [x.to(model.device) for x in data]
         label = label.to(model.device)
         pred = model(*data) ## Shape: (batch_size, n_ahead, n_endog), could be multiple tensors
 
         loss = loss_func(pred, label)
         resid = label - pred
-        curr_resid = (pd.DataFrame(resid.reshape(resid.shape[0],-1).detach().cpu().numpy(), index=index[:,0].cpu().numpy(), columns=col_name)).combine_first(curr_resid)
+        curr_resid = pd.DataFrame(resid.reshape(-1).detach().cpu().numpy(), columns=['residual']).assign(dataset_index=dataset_index)
+        curr_resid['index'] = np.repeat(index.reshape(-1).cpu().numpy(), pred.shape[2]) ## batch
+        curr_resid['n_ahead'] = np.tile(np.repeat(np.arange(pred.shape[1]), pred.shape[2]), pred.shape[0]) ## n_ahead
+        curr_resid['n_endog'] = np.tile(np.arange(pred.shape[2]), pred.shape[0] * pred.shape[1]) ## n_endog
+        curr_resids.append(curr_resid)
 
         if is_train:
             loss.backward()
@@ -60,7 +62,7 @@ def run_epoch(model: nn.Module, optimizer: Any, loss_func: Any, data_loader: Dat
             loss_sum += loss.item() * index.size(0)
         total_samples += index.size(0)
 
-    return loss_sum / total_samples, curr_resid
+    return loss_sum / total_samples, pd.concat(curr_resids, axis=0, ignore_index=True).drop_duplicates(keep='last')
 
 def train_and_evaluate_model(model: nn.Module,
                              optimizer: Any,
@@ -93,8 +95,6 @@ def train_and_evaluate_model(model: nn.Module,
 
     test_size = ceil(len(dataset) * test_ratio)
     train_size = len(dataset) - test_size
-    endog_cols = dataset.endog.columns
-
     if train_size > 0:
         train_start_time = timeit.default_timer()
         assert n_fold > 0, 'n_fold must be at least 1.'
@@ -125,11 +125,11 @@ def train_and_evaluate_model(model: nn.Module,
                     else:
                         valid_loader = None
 
-                    train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, residual_cols=endog_cols, clip_grad=clip_grad)
+                    train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, clip_grad=clip_grad)
 
                     if valid_loader is not None:
                         with no_grad():
-                            valid_loss, _ = run_epoch(model, optimizer, loss_func, valid_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
+                            valid_loss, _ = run_epoch(model, optimizer, loss_func, valid_loader, is_train=False, clip_grad=clip_grad)
 
                     curr_record = pd.Series({
                         'fold': fold,
@@ -157,7 +157,7 @@ def train_and_evaluate_model(model: nn.Module,
         test_set = Subset(dataset, range(len(dataset)-test_size, len(dataset)))
         test_loader = DataLoader(test_set, **dataloader_args)
         with no_grad():
-            test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols, clip_grad=clip_grad)
+            test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, clip_grad=clip_grad)
         test_stop_time = timeit.default_timer()
 
     print(f'Averaged validation loss: {np.nanmean(train_valid_loss)}. Test loss: {test_loss}.')
@@ -219,7 +219,6 @@ def train_and_evaluate_model_online(model: nn.Module,
 
     start_index = ceil(len(dataset) * train_ratio)
     end_index = len(dataset)
-    endog_cols = dataset.endog.columns
 
     update_rule.clear_logs()
 
@@ -232,7 +231,7 @@ def train_and_evaluate_model_online(model: nn.Module,
             train_loader = DataLoader(Subset(dataset, train_indices), **dataloader_args)
             train_records = []
             for epoch in range(epochs):
-                train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, residual_cols=endog_cols, clip_grad=clip_grad)
+                train_loss, train_resid = run_epoch(model, optimizer, loss_func, train_loader, is_train=True, clip_grad=clip_grad)
                 curr_record = pd.DataFrame({
                     'fold': 0,
                     'epoch': epoch,
@@ -244,7 +243,7 @@ def train_and_evaluate_model_online(model: nn.Module,
             update_rule.collect_train_stats(t_index, train_loss, train_resid, pd.concat(train_records, axis=0))
 
         test_loader = DataLoader(Subset(dataset, range(t_index+1, t_index+dataset.label_len+1)), batch_size=1)
-        test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False, residual_cols=endog_cols) ## We simulate to observe one step at a time and predict one step at a time
+        test_loss, test_resid = run_epoch(model, optimizer, loss_func, test_loader, is_train=False) ## We simulate to observe one step at a time and predict one step at a time
         update_rule.collect_test_stats(t_index, test_loss, test_resid)
     stop_time = timeit.default_timer()
 

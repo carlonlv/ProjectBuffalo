@@ -192,9 +192,9 @@ class TimeSeriesData(Dataset):
             start_index_label = end_index_label - (end_index_predictor - start_index_predictor) ## By default match the same length as predictor
 
         if self.split_endog is None:
-            return [self.dataset[start_index_predictor:end_index_predictor,:]], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label)
+            return [self.dataset[start_index_predictor:end_index_predictor,:]], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), None
         else:
-            return [self.dataset[start_index_predictor:end_index_predictor, x] for x in self.split_endog], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label)
+            return [self.dataset[start_index_predictor:end_index_predictor, x] for x in self.split_endog], self.dataset[start_index_label:end_index_label,self.target_cols], torch.arange(start_index_label, end_index_label), None
 
     def serialize_to_file(self, sql_path: str, additional_note: str='', conn: Optional[sqlite3.Connection]=None) -> NonnegativeInt:
         """ Write the performance of the model to a csv file and the trained model to file.
@@ -266,37 +266,15 @@ class TimeSeriesDataCollection(Dataset):
     Time series Data Collection that is loaded into memory. All operations involving time series data preserves ordering.
     """
     def __init__(self,
-                 endogs: List[pd.DataFrame],
-                 exogs: List[Optional[pd.DataFrame]],
-                 seq_len: Optional[PositiveInt]=None,
-                 label_len: PositiveInt=1,
-                 n_ahead: PositiveInt=1,
-                 name: Optional[str]=None,
-                 split_endog: Optional[List[List[int]]]=None,
-                 target_indices: Optional[List[int]]=None,
-                 timeseries_datasets: Optional[List[TimeSeriesData]]=None):
+                 timeseries_datasets: List[TimeSeriesData]=None):
         """
         Initializer for Time Series Dataset. The row of data is the time dimension. Assuming time in ascending order(past -> future).
 
         Intialize time series data.
 
-        :param endog: A list of endogenous variables. The row of data is the time dimension.
-        :param exogs: A list of exogenous variable The row of data is the time dimension. The exogenous variable must be enforced such that information is available before the timestamps for endog variables. Exogenous time series with the same timestamps are not assumed to be available for prediction, so only past timestamps are used.
-        :param seq_len: The length of sequence, the last row contains label. If not provided, all the past information starting from the beginning is used. Passed into constructor of TimeSeriesData.
-        :param label_len: The length of label. The length of the label (number of steps to predict ahead). If not provided, the label is the same length as the predictor. Passed into constructor of TimeSeriesData.
-        :param n_ahead: The number of steps to predict ahead. Passed into constructor of TimeSeriesData.
-        :param name: The convenient name for the dataset.
-        :param split_endog: A list of list of indices. Each list of indices is a list of columns to be used as endogenous variables. If not provided, all columns are used as endogenous variables. Passed into constructor of TimeSeriesData.
-        :param target_indices: A list of indices of the target columns. If not provided, the last column is used as the target column. Passed into constructor of TimeSeriesData.
         :param timeseries_datasets: A list of TimeSeriesData objects. If provided, the other parameters will be ignored.
         """
-        if timeseries_datasets is not None:
-            self.datasets = timeseries_datasets
-        else:
-            assert len(endogs) == len(exogs)
-            assert all([endog.shape[0] == exog.shape[0] if exog is not None else True for endog, exog in zip(endogs, exogs)])
-
-            self.datasets = [TimeSeriesData(endog, exog, seq_len, label_len, n_ahead, name, split_endog, target_indices) for endog, exog in zip(endogs, exogs)]
+        self.datasets = timeseries_datasets
 
     def __len__(self):
         return sum([len(x) for x in self.datasets])
@@ -304,7 +282,7 @@ class TimeSeriesDataCollection(Dataset):
     def __getitem__(self, index):
         indices_end = np.cumsum([len(x) for x in self.datasets])
         dataset_index = np.where(indices_end > index)[0][0]
-        predictor, label, index = self.datasets[dataset_index][(index-indices_end[dataset_index-1]) if dataset_index > 0 else index]
+        predictor, label, index, _ = self.datasets[dataset_index][(index-indices_end[dataset_index-1]) if dataset_index > 0 else index]
         return predictor, label, index, dataset_index
 
     def serialize_to_file(self, sql_path: str, additional_note: str='', conn: Optional[sqlite3.Connection]=None) -> List[NonnegativeInt]:
@@ -338,8 +316,8 @@ class TimeSeriesDataCollection(Dataset):
         """
         datasets = []
         for dataset_id in dataset_ids:
-            datasets.append(TimeSeriesData.deserialize_from_file(sql_path, dataset_id, conn))
-        return cls(None, None, None, None, None, None, None, None, timeseries_datasets=datasets)
+            datasets.append(TimeSeriesData.deserialize_from_file(sql_path, str(dataset_id), conn))
+        return cls(timeseries_datasets=datasets)
 
 
 class ModelPerformance:
@@ -401,7 +379,7 @@ class ModelPerformance:
 
         ## Store Dataset Information
         searched_id = self.dataset.serialize_to_file(sql_path, additional_note_dataset, newconn)
-        self.dataset.info['dataset_id'] = str(searched_id)
+        dataset_id = str(searched_id)
 
         ## Store Model Information
         table_name = 'model_info'
@@ -421,7 +399,7 @@ class ModelPerformance:
 
         table_name = 'training_info'
         id_col = 'training_id'
-        self.training_info['dataset_id'] = self.dataset.info['dataset_id']
+        self.training_info['dataset_id'] = dataset_id
         self.training_info['model_id'] = self.model.info['model_id']
         searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.training_info).drop(['average_train_loss', 'last_train_loss', 'average_validation_loss', 'train_start_time', 'train_stop_time', 'train_elapsed_time']).to_dict(), id_col)
         if searched_id == 0:
@@ -430,7 +408,7 @@ class ModelPerformance:
             pd.DataFrame(self.training_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/model-{id_col}-{searched_id}.pt')
             self.training_record.assign(training_id = searched_id).to_sql('training_record', newconn, if_exists='append', index=False)
-            self.training_residuals.to_sql(f'training_residuals-{searched_id}', newconn, if_exists='replace', index=True, index_label='index')
+            self.training_residuals.to_sql(f'training_residuals-{searched_id}', newconn, if_exists='replace', index=False)
         else:
             warn(f'training_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.training_info[id_col] = searched_id
@@ -444,7 +422,7 @@ class ModelPerformance:
             searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
             self.testing_info[id_col] = searched_id
             pd.DataFrame(self.testing_info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            self.testing_residuals.to_sql(f'testing_residuals-{searched_id}', newconn, if_exists='replace', index=True, index_label='index')
+            self.testing_residuals.to_sql(f'testing_residuals-{searched_id}', newconn, if_exists='replace', index=False)
         else:
             warn(f'testing_info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.testing_info[id_col] = searched_id
@@ -478,8 +456,8 @@ class ModelPerformance:
         training_record = training_record.replace({None: np.nan})
 
         ## Load Residuals
-        testing_residuals = pd.read_sql_query(f'SELECT * FROM "testing_residuals-{testing_info["testing_id"]}"', newconn, index_col='index')
-        training_residuals = pd.read_sql_query(f'SELECT * FROM "training_residuals-{training_info["training_id"]}"', newconn, index_col='index')
+        testing_residuals = pd.read_sql_query(f'SELECT * FROM "testing_residuals-{testing_info["testing_id"]}"', newconn)
+        training_residuals = pd.read_sql_query(f'SELECT * FROM "training_residuals-{training_info["training_id"]}"', newconn)
 
         ## Load Model Information
         model.info = pd.read_sql_query(f'SELECT * FROM model_info WHERE model_id={training_info["model_id"]}', newconn).T[0]
@@ -496,6 +474,28 @@ class ModelPerformance:
             newconn.close()
 
         return cls(model, dataset, training_record, training_residuals, testing_residuals, training_info, testing_info)
+
+    def get_endog_resid_predicted(self) -> pd.DataFrame:
+        """
+        Get the endogenous, residuals and predicted values of the dataset.
+        :return: A dataframe with columns ['time', 'n_ahead', 'index', 'series', 'price', 'predicted', 'residual', 'dataset_index', 'is_train'].
+        """
+        def parse_single_dataset(dataset, training_residuals, testing_residuals):
+            series_names = dataset.endog.columns
+            residuals = pd.concat((training_residuals.assign(is_train=True), testing_residuals.assign(is_train=False)), axis=0)
+            endog_long = dataset.endog.reset_index(names='time').reset_index().melt(id_vars=['time', 'index'], var_name='series', value_name='price')
+            residuals['series'] = residuals['n_endog'].apply(lambda x: series_names[x])
+            residuals = pd.merge(residuals, endog_long, on=['series', 'index'], how='outer')
+            residuals['predicted'] = residuals['price'] - residuals['residual']
+            return residuals[['time', 'n_ahead', 'index', 'series', 'price', 'predicted', 'residual', 'dataset_index', 'is_train']]
+
+        if isinstance(self.dataset, TimeSeriesDataCollection):
+            result = []
+            for dataset_id, dataset in enumerate(self.dataset):
+                result.append(parse_single_dataset(dataset, self.training_residuals[self.training_residuals['dataset_index'] == dataset_id], self.testing_residuals[self.testing_residuals['dataset_index'] == dataset_id]))
+            return pd.concat(result, axis=0)
+        else:
+            return parse_single_dataset(self.dataset, self.training_residuals, self.testing_residuals)
 
     def plot_training_records(self):
         """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
@@ -521,37 +521,28 @@ class ModelPerformance:
 
         :param figsize: The size of the figure.
         """
+        info_series = self.get_endog_resid_predicted()
+        info_series['series'] = 'Dataset'+ info_series['dataset_index'] + ':' + info_series['series'] + 'from ' + info_series['n_ahead'] + 'steps'
 
-        endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
         plt.subplots(figsize=figsize)
         plt.subplot(3, 1, 1)
-        plt1 = sns.lineplot(data=endog_long, x='time', y='price', hue='series', errorbar=None)
+        plt1 = sns.lineplot(data=info_series, x='time', y='price', hue='series', errorbar=None)
         plt1.set_title('Original Time Series', fontsize=12)
         plt1.set_xlabel('Time', fontsize=10)
         plt1.set_ylabel('Price', fontsize=10)
 
+        first_test_time = info_series[~info_series['is_train']]['time'].min()
+
         plt.subplot(3, 1, 2)
-        train_predicted = {}
-        test_predicted = {}
-        for col in self.training_residuals.columns:
-            colname, n_ahead = col.split(':')
-            train_predicted[col] = self.dataset.endog.iloc[(self.training_residuals.index + int(n_ahead)-1)][colname].to_numpy() - self.training_residuals[col].to_numpy()
-            test_predicted[col] = self.dataset.endog.iloc[(self.testing_residuals.index + int(n_ahead)-1)][colname].to_numpy() - self.testing_residuals[col].to_numpy()
-        train_predicted = pd.DataFrame(train_predicted, index = self.training_residuals.index)
-        test_predicted = pd.DataFrame(test_predicted, index = self.testing_residuals.index)
-        predicted_long = pd.concat((train_predicted, test_predicted), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
-        predicted_long['time'] = endog_long['time'].iloc[predicted_long['time']].values
-        plt2 = sns.lineplot(data=predicted_long, x='time', y='price', hue='series', errorbar=None)
-        plt2.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black')
+        plt2 = sns.lineplot(data=info_series, x='time', y='predicted', hue='series', errorbar=None)
+        plt2.axvline(x=first_test_time, color='black')
         plt2.set_title('Predicted Time Series', fontsize=12)
         plt2.set_xlabel('Time', fontsize=10)
         plt2.set_ylabel('Price', fontsize=10)
 
         plt.subplot(3, 1, 3)
-        residual_long = pd.concat((self.training_residuals, self.testing_residuals), axis=0).reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
-        residual_long['time'] = endog_long['time'].iloc[residual_long['time']].values
-        plt3 = sns.lineplot(data=residual_long, x='time', y='price', hue='series', errorbar=None)
-        plt3.axvline(x=endog_long['time'].iloc[self.testing_residuals.index.min()], color='black')
+        plt3 = sns.lineplot(data=info_series, x='time', y='residual', hue='series', errorbar=None)
+        plt3.axvline(x=first_test_time, color='black')
         plt3.set_title('Residual Time Series', fontsize=12)
         plt3.set_xlabel('Time', fontsize=10)
         plt3.set_ylabel('Price', fontsize=10)
@@ -607,18 +598,8 @@ class ModelPerformanceOnline:
         newconn = sqlite3.connect(sql_path)
 
         ## Store Dataset Information
-        table_name = 'dataset_info'
-        id_col = 'dataset_id'
-        self.dataset.info['additional_notes'] = additional_note_dataset
-        searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.dataset.info).drop('create_time'), id_col)
-        if searched_id == 0:
-            searched_id = search_id_given_pk(newconn, table_name, {}, id_col) + 1
-            self.dataset.info[id_col] = searched_id
-            pd.DataFrame(self.dataset.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
-            pd.concat((self.dataset.endog, self.dataset.exog), axis=1).to_sql(f'dataset_{searched_id}', newconn, index=True, index_label='time')
-        else:
-            warn(f"dataset_info with the same primary keys already exists with id {searched_id}, will not store dataset information.")
-            self.dataset.info[id_col] = searched_id
+        searched_id = self.dataset.serialize_to_file(sql_path, additional_note_dataset=additional_note_dataset, newconn=newconn)
+        dataset_id = str(searched_id)
 
         ## Store Model Information
         table_name = 'model_info'
@@ -653,7 +634,7 @@ class ModelPerformanceOnline:
 
         table_name = 'online_sim_info'
         id_col = 'sim_id'
-        self.info['dataset_id'] = self.dataset.info['dataset_id']
+        self.info['dataset_id'] = dataset_id
         self.info['model_id'] = self.model.info['model_id']
         self.info['updaterule_id'] = self.update_rule.info['updaterule_id']
         searched_id = search_id_given_pk(newconn, table_name, pd.Series(self.info).drop(['start_time', 'stop_time', 'elapsed_time']).to_dict(), id_col)
@@ -663,11 +644,11 @@ class ModelPerformanceOnline:
             pd.DataFrame(self.info, index=[0]).to_sql(table_name, newconn, if_exists='append', index=False)
             torch.save(self.model, f'{os.path.dirname(sql_path)}/onlinemodel-sim_id-{searched_id}.pt')
             self.update_rule.update_logs.to_sql(f'online_update_logs-sim_id-{searched_id}', newconn, index=False, if_exists='replace')
-            self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
-            self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
-            self.update_rule.train_record.to_sql(f'online_train_record-sim_id-{searched_id}', newconn, index=False)
-            self.update_rule.train_residuals.to_sql(f'online_train_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
-            self.update_rule.test_residuals.to_sql(f'online_test_residuals-sim_id-{searched_id}', newconn, index=True, index_label='time', if_exists='replace')
+            self.update_rule.train_logs.to_sql(f'online_train_logs-sim_id-{searched_id}', newconn, index=True, index_label='index', if_exists='replace')
+            self.update_rule.test_logs.to_sql(f'online_test_logs-sim_id-{searched_id}', newconn, index=True, index_label='index', if_exists='replace')
+            self.update_rule.training_record.to_sql(f'online_training_record-sim_id-{searched_id}', newconn, index=False)
+            self.update_rule.training_residuals.to_sql(f'online_training_residuals-sim_id-{searched_id}', newconn, index=False, if_exists='replace')
+            self.update_rule.testing_residuals.to_sql(f'online_testing_residuals-sim_id-{searched_id}', newconn, index=False, if_exists='replace')
         else:
             warn(f'info ({searched_id}) with the same primary keys already exists, will not store model information.')
             self.info[id_col] = searched_id
@@ -696,11 +677,11 @@ class ModelPerformanceOnline:
         model_id = sim_info['model_id']
 
         update_logs = pd.read_sql_query(f'SELECT * FROM "online_update_logs-sim_id-{sim_id}"', newconn)
-        train_logs = pd.read_sql_query(f'SELECT * FROM "online_train_logs-sim_id-{sim_id}"', newconn, index_col='time')
-        test_logs = pd.read_sql_query(f'SELECT * FROM "online_test_logs-sim_id-{sim_id}"', newconn, index_col='time')
-        train_record = pd.read_sql_query(f'SELECT * FROM "online_train_record-sim_id-{sim_id}"', newconn)
-        train_residuals = pd.read_sql_query(f'SELECT * FROM "online_train_residuals-sim_id-{sim_id}"', newconn, index_col='time')
-        test_residuals = pd.read_sql_query(f'SELECT * FROM "online_test_residuals-sim_id-{sim_id}"', newconn, index_col='time')
+        train_logs = pd.read_sql_query(f'SELECT * FROM "online_train_logs-sim_id-{sim_id}"', newconn, index_col='index')
+        test_logs = pd.read_sql_query(f'SELECT * FROM "online_test_logs-sim_id-{sim_id}"', newconn, index_col='index')
+        training_record = pd.read_sql_query(f'SELECT * FROM "online_training_record-sim_id-{sim_id}"', newconn)
+        training_residuals = pd.read_sql_query(f'SELECT * FROM "online_training_residuals-sim_id-{sim_id}"', newconn)
+        testing_residuals = pd.read_sql_query(f'SELECT * FROM "online_testing_residuals-sim_id-{sim_id}"', newconn)
 
         model = torch.load(f'{os.path.dirname(sql_path)}/model-sim_id-{sim_id}.pt')
 
@@ -725,16 +706,16 @@ class ModelPerformanceOnline:
         result.update_rule.update_logs = update_logs
         result.update_rule.train_logs = train_logs
         result.update_rule.test_logs = test_logs
-        result.update_rule.train_record = train_record
-        result.update_rule.train_residuals = train_residuals
-        result.update_rule.test_residuals = test_residuals
+        result.update_rule.training_record = training_record
+        result.update_rule.training_residuals = training_residuals
+        result.update_rule.testing_residuals = testing_residuals
         return result
 
     def plot_training_records(self):
         """ Plot the training loss and validation loss over epochs, used to check the convergence speed.
         """
         def helper(time_step):
-            training_records = self.update_rule.train_record.query(f't_index == {time_step}').copy()
+            training_records = self.update_rule.training_record.query(f't_index == {time_step}').copy()
             training_records['fold'] = training_records['fold'].astype(int).astype(str)
             plt1 = sns.lineplot(x='epoch', y='training_loss', hue='fold', data=training_records)
             plt1.set_title('Training Loss over Time')
@@ -743,13 +724,35 @@ class ModelPerformanceOnline:
             plt.show()
 
         # create a widget for selecting the time step
-        time_step_slider = widgets.SelectionSlider(options=self.update_rule.train_record['t_index'].unique(), description='Time step:')
+        time_step_slider = widgets.SelectionSlider(options=self.update_rule.training_record['t_index'].unique(), description='Time step:')
 
         # link the widget to the plot function
         widgets.interact(helper, time_step=time_step_slider)
 
         # display the widget
         display(time_step_slider)
+
+    def get_endog_resid_predicted(self):
+        """
+        Get the endogenous, residuals and predicted values of the dataset.
+        :return: endog, exog, resid, predicted
+        """
+        def parse_single_dataset(dataset, training_residuals, testing_residuals):
+            series_names = dataset.endog.columns
+            residuals = pd.concat((training_residuals, testing_residuals), axis=0)
+            endog_long = dataset.endog.reset_index(names='time').reset_index().melt(id_vars=['time', 'index'], var_name='series', value_name='price')
+            residuals['series'] = residuals['n_endog'].apply(lambda x: series_names[x])
+            residuals = pd.merge(residuals, endog_long, on=['series', 'index'], how='outer')
+            residuals['predicted'] = residuals['price'] - residuals['residual']
+            return residuals[['time', 'index', 'series', 'price', 'predicted', 'residual']]
+
+        if isinstance(self.dataset, TimeSeriesDataCollection):
+            result = []
+            for dataset_id, dataset in enumerate(self.dataset):
+                result.append(parse_single_dataset(dataset, self.training_residuals[self.training_residuals['dataset_index'] == dataset_id], self.testing_residuals[self.testing_residuals['dataset_index'] == dataset_id]))
+            return pd.concat(result, axis=0)
+        else:
+            return parse_single_dataset(self.dataset, self.training_residuals, self.testing_residuals)
 
     def plot_logs(self):
         """ Plot the training loss and validation loss over time, used to check the convergence speed.
@@ -781,7 +784,7 @@ class ModelPerformanceOnline:
             curr_update_time = time_step
             next_update_time = self.update_rule.update_logs.query(f't_index > {time_step}')['t_index'].min()
             if pd.isna(next_update_time):
-                next_update_time = self.update_rule.test_residuals['t_index'].max()
+                next_update_time = self.update_rule.testing_residuals['t_index'].max()
             endog_long = self.dataset.endog.reset_index(names='time').melt(id_vars='time', var_name='series', value_name='price')
 
             _, axes = plt.subplots(3, 1, figsize=figsize)
@@ -791,11 +794,11 @@ class ModelPerformanceOnline:
             axes[0].set_ylabel('Price', fontsize=10)
 
             update_logs = self.update_rule.update_logs.query(f't_index == {time_step}').iloc[0]
-            test_residuals = self.update_rule.test_residuals.query(f't_index > {curr_update_time} and t_index <= {next_update_time}').copy()
-            train_residuals = self.update_rule.train_residuals.query(f't_index == {curr_update_time}').copy()
-            train_residuals.index = range(int(update_logs['start_index']), int(update_logs['end_index'])+1)
-            test_residuals.index = range(int(update_logs['end_index'])+1, int(update_logs['end_index'])+len(test_residuals.index)+1)
-            residual_long = pd.concat((train_residuals.reset_index(names='time').assign(type='training'), test_residuals.reset_index(names='time').assign(type='testing')), axis=0).melt(id_vars=['t_index', 'type', 'time'], var_name='series', value_name='price')
+            testing_residuals = self.update_rule.testing_residuals.query(f't_index > {curr_update_time} and t_index <= {next_update_time}').copy()
+            training_residuals = self.update_rule.training_residuals.query(f't_index == {curr_update_time}').copy()
+            training_residuals['index'] = range(int(update_logs['start_index']), int(update_logs['end_index'])+1)
+            testing_residuals['index'] = range(int(update_logs['end_index'])+1, int(update_logs['end_index'])+len(testing_residuals['index'])+1)
+            residual_long = pd.concat((training_residuals.reset_index(names='time').assign(type='training'), testing_residuals.reset_index(names='time').assign(type='testing')), axis=0).melt(id_vars=['t_index', 'type', 'time'], var_name='series', value_name='price')
 
             predicted_long = residual_long.copy()
             predicted_long['price'] = endog_long.iloc[residual_long['time']]['price'].values - residual_long['price'].values
@@ -805,14 +808,14 @@ class ModelPerformanceOnline:
 
             sns.lineplot(ax = axes[1], data=predicted_long, x='time', y='price', color='green')
             sns.scatterplot(ax = axes[1], data=predicted_long, x='time', y='price', color='green')
-            axes[1].axvline(x=endog_long['time'].iloc[test_residuals['t_index'].min()], color='black', linestyle='--')
+            axes[1].axvline(x=endog_long['time'].iloc[testing_residuals['t_index'].min()], color='black', linestyle='--')
             axes[1].set_title('Predicted Time Series', fontsize=12)
             axes[1].set_xlabel('Time', fontsize=10)
             axes[1].set_ylabel('Price', fontsize=10)
 
             sns.lineplot(ax = axes[2], data=residual_long, x='time', y='price', color='red')
             sns.scatterplot(ax = axes[2], data=residual_long, x='time', y='price', color='red')
-            axes[2].axvline(x=endog_long['time'].iloc[test_residuals['t_index'].min()], color='black', linestyle='--')
+            axes[2].axvline(x=endog_long['time'].iloc[testing_residuals['t_index'].min()], color='black', linestyle='--')
             axes[2].set_title('Residual Time Series', fontsize=12)
             axes[2].set_xlabel('Time', fontsize=10)
             axes[2].set_ylabel('Price', fontsize=10)
@@ -820,7 +823,7 @@ class ModelPerformanceOnline:
             plt.show()
 
         # create a widget for selecting the time step
-        time_step_slider = widgets.SelectionSlider(options=self.update_rule.train_residuals['t_index'].unique(), description='Time step:')
+        time_step_slider = widgets.SelectionSlider(options=self.update_rule.training_residuals['t_index'].unique(), description='Time step:')
 
         # link the widget to the plot function
         widgets.interact(helper, time_step=time_step_slider)
