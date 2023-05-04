@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
+from requests import HTTPError
 from tqdm import tqdm
 
 from ..utility import (PositiveFlt, PositiveInt, concat_list,
@@ -99,6 +100,8 @@ class DataIngestion:
                 except (PermissionError, KeyError, ValueError) as other_exception:
                     warnings.warn(str(other_exception))
                     break
+                except HTTPError as unhadled_exception:
+                    warnings.warn(str(unhadled_exception))
 
     def load_data(
         self,
@@ -146,13 +149,20 @@ class DataIngestion:
                 write_data = {data_names: self.data[data_names]}
         else:
             write_data = {k: self.data[k] for k in data_names if k in self.data}
+        if len(write_data) == 0:
+            return
         create_parent_directory(file_path)
         conn = sqlite3.connect(file_path)
-        dtypes = pd.read_sql('SELECT * FROM dtypes', conn, index_col='column')
-        for key, val in write_data.items():
-            val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
-            if key in dtypes['table']:
-                dtypes = dtypes[dtypes['table'] != key]
-            dtypes = pd.concat([dtypes, val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'})], axis=0)
+        if 'dtypes' in pd.read_sql_query('SELECT name FROM sqlite_master WHERE type="table"', conn)['name']:
+            dtypes = pd.read_sql('SELECT * FROM dtypes', conn, index_col='column')
+            for key, val in write_data.items():
+                val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
+                if key in dtypes['table']:
+                    dtypes = dtypes[dtypes['table'] != key]
+                dtypes = pd.concat([dtypes, val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'})], axis=0)
+        else:
+            for key, val in write_data.items():
+                val.to_sql(key, conn, if_exists='replace', index=True, index_label=store_index_to)
+            dtypes = pd.concat([val.dtypes.to_frame(name='dtype').assign(table = key).astype({'dtype': 'str'}) for key, val in write_data.items()], axis=0)
         dtypes.to_sql('dtypes', conn, if_exists='replace', index=True, index_label='column')
         conn.close()
