@@ -131,12 +131,6 @@ If $$q$$ delivers $$SF$$ before $$i$$, it must receive $$?$$ from majority of th
 
 _Proof_: By Termination and Uniform Integrity, all correct processes deliver exactly one message. By Uniform Integrity, this message is either $$SF$$ or the sender’s message $$m \neq SF$$. Agreement now follows by the previous lemma.
 
-**Lemma**: This problem cannot be solved if $$n \leq 2t$$.
-
-_Proof_: Suppose that all processes can be partitioned into two sets of processes, one of them is correct and the bigger set have general omission failures.
-
-Assume that there exists algorithm that satisfies Validity, Termination and Agreement. By Validity and Termination, if the sender $$s$$ broadcasts a message $$m$$, then correct processes need to deliver $$m$$. Suppose&#x20;
-
 ## Early-Stopping TRB Algorithm for General-Omission Failures
 
 ```
@@ -172,7 +166,7 @@ _Proof_: If the sender is correct and broadcasts $$m$$, it sends $$m$$ to all an
 _Proof_: If $$f = 0$$, the sender is correct. In this case, all correct processes deliver the sender's message in round 1 and halt by round 2. Assume that $$1 \leq f \leq t$$, there are two cases:
 
 1. Some correct process $$p$$ delivers a message $$m$$ by the end of round $$f$$. In this case, $$p$$ sends $$m$$ to all by round $$f+1$$. Thus, all correct processes deliver $$m$$ by the end of round $$f+1$$, and halt by the end of round $$min(f+2, t+1)$$.
-2. No correct process delivers any message by the end of round $$f$$. Thus, no correct process halts before the end of round $$f+1$$. So, in all rounds $$i$$, $$1 \leq i \leq f+1$$, all correct processes send a message to all. Consider any correct process $$p$$ at the end of round $$f+1$$. Since all correct processes send a message to all in rounds $$1,2, ..., f+1$$, $$p$$'s set $$quiet({f+1})$$ can only contain faulty processes. So, $$| quiet(f+1)| < f+1$$at the end of round $$f+1$$. $$p$$ delivers $$SF$$ in round $$f+1$$, and then halts by round $$min(f+2,t+1)$$.
+2. No correct process delivers any message by the end of round $$f$$. Thus, no correct process halts before the end of round $$f+1$$. So, in all rounds $$i$$, $$1 \leq i \leq f+1$$, all correct processes send a message to all. Consider any correct process $$p$$ at the end of round $$f+1$$. Since all correct processes send a message to all in rounds $$1,2, ..., f+1$$, $$p$$'s set $$quiet({f+1})$$ can only contain faulty processes. So, $$| quiet(f+1)| < f+1$$ at the end of round $$f+1$$. $$p$$ delivers $$SF$$ in round $$f+1$$, and then halts by round $$min(f+2,t+1)$$.
 
 **Lemma (Uniform Integrity)**: Every process delivers at most one message, and delivers $$m \neq SF$$ only if $$m$$ was previously broadcast by the sender.
 
@@ -188,7 +182,7 @@ Let $$p$$ be the first correct process to deliver $$m \neq SF$$. $$p$$ delivers 
 
 No process (whether correct or faulty) delivers $$SF$$ before or in round $$i$$.
 
-Suppose the first process to deliver $$SF$$, say process $$q$$, does so by round $$j \leq i$$. In rounds $$1 \leq k \leq j$$, $$q$$ did not receive $$m$$ from $$p_k$$. Thus, at the end of round $$j$$, $$quiet(j)$$includes processes $$\lbrace p_1, ..., p_j \rbrace$$, and so $$|quiet(j)| \geq j$$. Since the $$q$$ is the first process to deliver $$SF$$, which means $$|quiet(j)| < j$$, which is a contradiction.
+Suppose the first process to deliver $$SF$$, say process $$q$$, does so by round $$j \leq i$$. In rounds $$1 \leq k \leq j$$, $$q$$ did not receive $$m$$ from $$p_k$$. Thus, at the end of round $$j$$, $$quiet(j)$$ includes processes $$\lbrace p_1, ..., p_j \rbrace$$, and so $$|quiet(j)| \geq j$$. Since the $$q$$ is the first process to deliver $$SF$$, which means $$|quiet(j)| < j$$, which is a contradiction.
 
 Since $$p$$ delivers $$m$$ in round $$i < t+1$$, it sends $$m$$ to all in round $$i+1$$. Furthermore, no process sends $$SF$$ in round $$i+1$$. Thus, in round $$i+1$$, any correct process that has not yet delivered a message receives and delivers $$m$$. Together with the above claim, this implies that no correct process ever delivers $$SF$$.
 
@@ -212,7 +206,7 @@ Every receiver p not equals s in round i, 1 <= i <= t+1:
     quiet(i) = quiet(i-1) union {q | p receive no round i message from q}
     if received some message m not equals ? in round i:
         deliver m
-    else if |quiet(i)| < |quiet(i-1)|:
+    else if |quiet(i)| == |quiet(i-1)|:
         deliver SF
 halt
 ```
@@ -221,7 +215,7 @@ In this protocol, a process halts if it does not see any new failures in a round
 
 **Lemma (Validity)**: If the sender is correct and broadcasts $$m$$, then all correct processes deliver $$m$$.
 
-_Proof_: The validity proof is the same as the one in the original Early-stopping TRB.
+_Proof_: If the sender is correct and broadcasts $$m$$, it sends $$m$$ to all and delivers $$m$$ in round 1. Thus, all other correct processes receive and deliver $$m$$ by the end of round 1.
 
 **Lemma (Termination)**: All correct processes deliver some message by round $$f+1$$, and halt by round $$min(f+2, t+1)$$ or $$min(f+3,t+1)$$.
 
@@ -232,11 +226,11 @@ _Proof_: If $$f = 0$$, the sender is correct. In this case, all correct processe
 
 **Lemma (Uniform Integrity)**: Every process delivers at most one message, and delivers $$m \neq SF$$ only if $$m$$ was previously broadcast by the sender.
 
-_Proof_: It is clear from the structure of the algorithm that no process delivers more than once. Since only benign failures may occur and the send/receive primitive satisfies Uniform Integrity, a simple induction shows that if a process delivers $$m \neq SF$$, then the sender sends $$m$$ to some process in the first round.
+_Proof_: It is clear from the structure of the algorithm that no process delivers more than once. Since only crash failures may occur, we wish to show that if a process delivers $$m \neq SF$$, then the sender sends $$m$$ to some process in the first round.
 
 If some correct process delivers $$m \neq SF$$, then some correct process delivers $$m$$ before round $$t + 1$$.
 
-Suppose some process delivers $$m \neq SF$$ in round $$t+1$$. This implies the existence of $$t+1$$ distinct processes $$\lbrace p_1, ..., p_{t+1} \rbrace$$, such that for $$1 \leq i \leq t+1$$, $$p_i$$ sends $$m$$ in round $$i$$. One of them, say $$p_k$$, must be correct. If $$k=1$$, then $$p_k$$ delivered $$m$$ in round 1. If $$2 \leq k \leq t+1$$, then $$p_k$$delivered $$m$$ in round $$k-1$$. In both cases, $$p_k$$ sends $$m$$ in round $$k$$.
+Suppose some process delivers $$m \neq SF$$ in round $$t+1$$. This implies the existence of $$t+1$$ distinct processes $$\lbrace p_1, ..., p_{t+1} \rbrace$$, such that for $$1 \leq i \leq t+1$$, $$p_i$$ sends $$m$$ in round $$i$$. One of them, $$p_k$$, must be correct. If $$k=1$$, then $$p_k$$ delivered $$m$$ in round 1. If $$2 \leq k \leq t+1$$, then $$p_k$$delivered $$m$$ in round $$k-1$$. In both cases, $$p_k$$ sends $$m$$ in round $$k$$.
 
 If some correct process delivers $$m \neq SF$$, then no correct process ever delivers $$SF$$.
 
@@ -244,13 +238,19 @@ Let $$p$$ be the first correct process to deliver $$m \neq SF$$. $$p$$ delivers 
 
 No process (whether correct or faulty) delivers $$SF$$ before or in round $$i$$.
 
-Suppose the first process to deliver $$SF$$, say process $$q$$, does so by round $$j \leq i$$. In rounds $$1 \leq k \leq j$$, $$q$$ did not receive $$m$$ from $$p_k$$. Thus, at the end of round $$j$$, $$quiet(j)$$includes processes $$\lbrace p_1, ..., p_j \rbrace$$, and so $$|quiet(j)| \geq j$$. Since the $$q$$ is the first process to deliver $$SF$$, which means $$|quiet(j)| < j$$, which is a contradiction.
+Suppose the first process to deliver $$SF$$, say process $$q$$, does so by round $$j \leq i$$. This means that the quiet set, $$|quiet(j)| = |quiet(j-1)|$$. In rounds $$1 \leq k \leq j-1$$, $$q$$ did not receive $$m$$ from $$p_k$$. Thus, at the end of round $$j-1$$, $$quiet(j-1)$$includes processes $$\lbrace p_1, ..., p_{j-1} \rbrace$$. Since we assume crash failure only, no processes can be removed from quiet set once they are in there. So $$quite(j) = quite(j-1) = \lbrace p_1, ..., p_{j-1} \rbrace$$.  Since $$p_j$$ also couldn't deliver message in round $$j$$, $$quite(j)$$ should include include $$p_j$$ thus be bigger than $$quite(j-1)$$, which is a contradiction.
 
 Since $$p$$ delivers $$m$$ in round $$i < t+1$$, it sends $$m$$ to all in round $$i+1$$. Furthermore, no process sends $$SF$$ in round $$i+1$$. Thus, in round $$i+1$$, any correct process that has not yet delivered a message receives and delivers $$m$$. Together with the above claim, this implies that no correct process ever delivers $$SF$$.
 
 **Lemma (Agreement)**: If some correct process delivers a message $$m$$ (possibly $$SF$$), then every correct process eventually delivers $$m$$.
 
 _Proof_: By Termination and Uniform Integrity, all correct processes deliver exactly one message. By Uniform Integrity, this message is either $$SF$$ or the sender’s message $$m \neq SF$$. Agreement now follows by the previous lemma.
+
+**Lemma**: This algorithm only works if we assume crash failure only, and it does not work if there exists send omissions.
+
+_Proof_: We have proved using previous lemmas that this algorithm is a valid t-tolerant early-stopping TRB if we only assume crash failures.
+
+Suppose we allow send-omission failures, for arbitrary process $$q$$ has send omission to all other processes. Here is a scenario where this algorithm fails to provide Uniform Integrity. Suppose $$p$$ has send omission failure to all other processes. Sender has send omission except for $$p$$. This means that, $$p$$ will receive message $$m$$ from sender, and deliver $$m$$, whereas other processes will not receive any messages and deliver $$SF$$, which violates uniform integrity.
 
 ## A Message-Efficient Early-Stopping TRB Algorithm
 
